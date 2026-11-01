@@ -92,7 +92,7 @@ async function audit(identity: AdminIdentity, request: FastifyRequest, action: s
 export async function registerAdminRoutes(app: FastifyInstance) {
   const secure = process.env.NODE_ENV === "production";
 
-  app.post("/api/admin/auth/login", async (request, reply) => {
+  app.post("/api/admin/auth/login", { config: { rateLimit: { max: 5, timeWindow: "15 minutes" } } }, async (request, reply) => {
     const parsed = loginSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: "Enter a valid email and password." });
     const [rows] = await db.query<AdminRow[]>(
@@ -183,16 +183,16 @@ export async function registerAdminRoutes(app: FastifyInstance) {
     const connection = await db.getConnection();
     try {
       await connection.beginTransaction();
-      const [rows] = await connection.query<Array<RowDataPacket & { payment_status: string }>>(
-        "SELECT payment_status FROM orders WHERE id = ? FOR UPDATE", [params.data.orderId],
+      const [rows] = await connection.query<Array<RowDataPacket & { payment_status: string; fulfilment_status: string }>>(
+        "SELECT payment_status, fulfilment_status FROM orders WHERE id = ? FOR UPDATE", [params.data.orderId],
       );
       if (!rows[0]) { await connection.rollback(); return reply.code(404).send({ error: "Order not found." }); }
-      if (rows[0].payment_status !== "successful") { await connection.rollback(); return reply.code(409).send({ error: "Only payment-verified orders can be moved to manual review." }); }
+      if (rows[0].payment_status !== "successful" || rows[0].fulfilment_status === "completed") {
+        await connection.rollback();
+        return reply.code(409).send({ error: "Only payment-verified, unfulfilled orders can be moved to manual review." });
+      }
       await connection.execute(
         "UPDATE orders SET order_status = 'manual_review', fulfilment_status = 'manual_review' WHERE id = ?", [params.data.orderId],
-      );
-      await connection.execute(
-        "UPDATE issued_cards SET issuance_status = 'manual_review' WHERE order_id = ? AND issuance_status IN ('queued','pending','issuing')", [params.data.orderId],
       );
       await connection.execute(
         "INSERT INTO admin_audit_log (admin_user_id, action, entity_type, entity_id, details, ip_address) VALUES (?, 'order.manual_review', 'order', ?, ?, ?)",
