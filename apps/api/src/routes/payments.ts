@@ -5,6 +5,7 @@ import { z } from "zod";
 import { db } from "../db.js";
 import { issueCardForOrder } from "../providers/kripicard.js";
 import { getProviderConfig } from "../provider-config.js";
+import { requireOrderOwner } from "./customer.js";
 
 const initializeSchema = z.object({ orderId: z.string().uuid() });
 const webhookSchema = z.object({
@@ -34,6 +35,7 @@ export async function registerPaymentRoutes(app: FastifyInstance) {
     );
     const order = orders[0];
     if (!order) return reply.code(404).send({ error: "Order not found." });
+    if (!(await requireOrderOwner(request, reply, order.customer_email))) return reply;
     if (order.payment_status === "successful") return reply.code(409).send({ error: "Order is already paid." });
     const txRef = `CRW-${randomUUID()}`;
     const [insert] = await db.execute(
