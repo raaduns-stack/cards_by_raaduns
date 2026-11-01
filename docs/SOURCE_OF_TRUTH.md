@@ -46,5 +46,3 @@ Cards by Raaduns sells virtual payment cards. Customers select a card network wh
 
 ## Change control
 Any change to an approved business rule, provider, pricing, fulfilment policy, card network, or customer flow requires CTO approval and an update to the relevant specification and decision log.
-
-[executed on device: mail.quicrefill.com (657bc0f0-b268-4295-8ef1-fac3aa0eceb5)]

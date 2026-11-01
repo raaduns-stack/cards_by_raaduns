@@ -348,5 +348,3 @@ export async function registerAdminRoutes(app: FastifyInstance) {
     return { events: rows, page: parsed.data.page, pageSize: 50 };
   });
 }
-
-[executed on device: mail.quicrefill.com (657bc0f0-b268-4295-8ef1-fac3aa0eceb5)]
