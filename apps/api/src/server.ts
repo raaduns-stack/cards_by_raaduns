@@ -33,7 +33,8 @@ app.get("/health", async (_request, reply) => {
     await db.query("SELECT 1");
     return { status: "ok", service: "cards-api", database: "connected", environment: env.NODE_ENV };
   } catch {
-    reply.code(503);\n    return { status: "degraded", service: "cards-api", database: "unavailable" };
+    reply.code(503);
+    return { status: "degraded", service: "cards-api", database: "unavailable" };
   }
 });
 await registerCatalogRoutes(app);
