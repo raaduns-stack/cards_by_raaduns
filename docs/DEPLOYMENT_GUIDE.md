@@ -23,7 +23,8 @@
 - Pending issuance polling endpoint: POST /api/internal/kripicard/poll. It requires the x-job-secret header matching INTERNAL_JOB_SECRET. Schedule it through the hosting cron facility after deployment.
 - The supplied Kripicard documentation does not define a webhook event contract. Do not invent one; pending issuance is reconciled through the documented Request Status endpoint.
 - The customer storefront calls /api/catalog, /api/orders, and /api/payments/flutterwave/initialize. The production reverse proxy must route /api and /webhooks to the Node API.
-- The customer callback URL includes the order UUID as a bearer status reference. The status response does not include the customer's email address.
+- Customer checkout creates an order, sends a six-digit email OTP, verifies ownership, and only then allows Flutterwave initialization.
+- Customer order status and history require a 30-day HttpOnly, SameSite=Strict customer session established by OTP verification. Order UUIDs alone do not authorize order access.
 - Admin console: /admin. API endpoints are under /api/admin/* and require an authenticated staff session. The web server must serve the SPA index.html for direct navigation to /admin as well as /.
 
 - Admin sessions use a 12-hour HttpOnly, SameSite=Strict cookie and CSRF token. Production cookies are Secure. Login is limited to five attempts per 15 minutes per source.
@@ -42,7 +43,7 @@
 1. Obtain CTO approval for the release target and production activation.
 2. Install dependencies from the lockfile.
 3. Run typecheck, tests, and production build.
-4. Apply reviewed database migrations with a least-privilege account using npm run migrate --workspace @cards/api.
+4. Apply reviewed database migrations with a least-privilege account using npm run migrate --workspace @cards/api (includes migration 005_customer_email_ownership.sql).
 5. Create the first administrator once: set ADMIN_EMAIL, ADMIN_DISPLAY_NAME, and a unique ADMIN_PASSWORD (12+ characters) in a protected environment, then run npm run bootstrap-admin --workspace @cards/api. Remove the bootstrap variables immediately afterward. Verify /admin login and remove or rotate the account if bootstrap was run in error.
 6. Configure production environment secrets securely, including SMTP_HOST, SMTP_PORT=587, SMTP_USER, SMTP_PASSWORD, and SMTP_FROM. Port 587 requires STARTTLS with certificate verification. Run `npm run smtp:verify --workspace @cards/api` from the release directory to verify the connection.
 7. Configure HTTPS and the Flutterwave webhook URL: https://cards.raaduns.com/webhooks/flutterwave
@@ -52,4 +53,4 @@
 11. Deploy to a versioned release directory and retain rollback target.
 
 ## Not yet production-ready
-Customer account ownership, balance lookup, email notifications, and the secure card-secret delivery design are not implemented. Admin console is implemented on development/bootstrap but is not deployed or migrated in production. Do not enable public sales until these customer and operational flows are completed and reviewed.
+Customer email ownership and OTP-gated order access are implemented in the development branch but have not been deployed or migrated in production. Customer card management, protected balance lookup, card-delivery notifications, and the secure card-secret delivery design remain outstanding. Admin console is also not deployed or migrated in production. Do not enable public sales until these customer and operational flows are completed, configured, and reviewed.
