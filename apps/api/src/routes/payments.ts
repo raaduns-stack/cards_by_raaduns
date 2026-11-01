@@ -45,7 +45,7 @@ export async function registerPaymentRoutes(app: FastifyInstance) {
         headers: { Authorization: `Bearer ${secret}`, "Content-Type": "application/json" },
         body: JSON.stringify({
           tx_ref: txRef, amount: order.amount.toFixed(2), currency: order.currency,
-          redirect_url: `${(process.env.APP_URL ?? "http://localhost:5173").replace(/\/$/, "")}/payment/callback`,
+          redirect_url: `${(process.env.APP_URL ?? "http://localhost:5173").replace(/\/$/, "")}/payment/callback?orderId=${encodeURIComponent(order.id)}`,
           customer: { email: order.customer_email },
           customizations: { title: "Cards by Raaduns", description: `Order ${order.order_number}` },
           meta: { order_number: order.order_number },

@@ -65,7 +65,7 @@ export async function registerOrderRoutes(app: FastifyInstance) {
         paymentStatus: "pending",
         amount,
         currency: pricing.currency,
-        nextStep: "Payment initialization is the next integration step.",
+        nextStep: "initialize_payment",
       });
     } catch (error) {
       await connection.rollback();
@@ -80,17 +80,16 @@ export async function registerOrderRoutes(app: FastifyInstance) {
     const params = z.object({ orderId: z.string().uuid() }).safeParse(request.params);
     if (!params.success) return reply.code(400).send({ error: "Invalid order ID." });
     const [rows] = await db.query<Array<RowDataPacket & {
-      order_number: string; customer_email: string; currency: string; amount: number;
+      order_number: string; currency: string; amount: number;
       order_status: string; payment_status: string; fulfilment_status: string; created_at: Date;
     }>>(
-      "SELECT order_number, customer_email, currency, amount, order_status, payment_status, fulfilment_status, created_at FROM orders WHERE id = ?",
+      "SELECT order_number, currency, amount, order_status, payment_status, fulfilment_status, created_at FROM orders WHERE id = ?",
       [params.data.orderId],
     );
     const order = rows[0];
     if (!order) return reply.code(404).send({ error: "Order not found." });
     return {
       orderNumber: order.order_number,
-      email: order.customer_email,
       currency: order.currency,
       amount: order.amount,
       status: order.order_status,
