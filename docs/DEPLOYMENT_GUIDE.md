@@ -24,18 +24,24 @@
 - The supplied Kripicard documentation does not define a webhook event contract. Do not invent one; pending issuance is reconciled through the documented Request Status endpoint.
 - The customer storefront calls /api/catalog, /api/orders, and /api/payments/flutterwave/initialize. The production reverse proxy must route /api and /webhooks to the Node API.
 - The customer callback URL includes the order UUID as a bearer status reference. The status response does not include the customer's email address.
+- Admin console: /admin. API endpoints are under /api/admin/* and require an authenticated staff session.
+- Admin sessions use a 12-hour HttpOnly, SameSite=Strict cookie and CSRF token. Production cookies are Secure. Login is limited to five attempts per 15 minutes per source.
+- Roles: admin can manage pricing and read audit logs; operations can manage order manual-review flags; support can view operational data. All roles can view orders and dashboard metrics.
+- Manual review flags do not cancel or retry provider issuance. Provider polling continues and will not overwrite an order's manual-review state.
+- Admin users are created through the one-time bootstrap command; never expose bootstrap credentials in source control or retain them in the runtime environment.
 
 ## Release checklist
 1. Obtain CTO approval for the release target and production activation.
 2. Install dependencies from the lockfile.
 3. Run typecheck, tests, and production build.
 4. Apply reviewed database migrations with a least-privilege account using npm run migrate --workspace @cards/api.
-5. Configure production environment secrets securely.
-6. Configure HTTPS and the Flutterwave webhook URL: https://cards.raaduns.com/webhooks/flutterwave
-7. Configure the production reverse proxy and process supervisor in FastPanel.
-8. Configure a scheduled POST to /api/internal/kripicard/poll using the internal job secret.
-9. Smoke-test health endpoint and customer/admin access controls.
-10. Deploy to a versioned release directory and retain rollback target.
+5. Create the first administrator once: set ADMIN_EMAIL, ADMIN_DISPLAY_NAME, and a unique ADMIN_PASSWORD (12+ characters) in a protected environment, then run npm run bootstrap-admin --workspace @cards/api. Remove the bootstrap variables immediately afterward. Verify /admin login and remove or rotate the account if bootstrap was run in error.
+6. Configure production environment secrets securely.
+7. Configure HTTPS and the Flutterwave webhook URL: https://cards.raaduns.com/webhooks/flutterwave
+8. Configure the production reverse proxy and process supervisor in FastPanel.
+9. Configure a scheduled POST to /api/internal/kripicard/poll using the internal job secret.
+10. Smoke-test health endpoint and customer/admin access controls.
+11. Deploy to a versioned release directory and retain rollback target.
 
 ## Not yet production-ready
-Admin authentication, customer account ownership, balance lookup, email notifications, and the secure card-secret delivery design are not implemented. Do not enable public sales until these customer and operational flows are completed and reviewed.
+Customer account ownership, balance lookup, email notifications, and the secure card-secret delivery design are not implemented. Admin console is implemented on development/bootstrap but is not deployed or migrated in production. Do not enable public sales until these customer and operational flows are completed and reviewed.
