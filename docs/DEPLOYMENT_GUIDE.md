@@ -24,7 +24,8 @@
 - The supplied Kripicard documentation does not define a webhook event contract. Do not invent one; pending issuance is reconciled through the documented Request Status endpoint.
 - The customer storefront calls /api/catalog, /api/orders, and /api/payments/flutterwave/initialize. The production reverse proxy must route /api and /webhooks to the Node API.
 - The customer callback URL includes the order UUID as a bearer status reference. The status response does not include the customer's email address.
-- Admin console: /admin. API endpoints are under /api/admin/* and require an authenticated staff session.
+- Admin console: /admin. API endpoints are under /api/admin/* and require an authenticated staff session. The web server must serve the SPA index.html for direct navigation to /admin as well as /.
+
 - Admin sessions use a 12-hour HttpOnly, SameSite=Strict cookie and CSRF token. Production cookies are Secure. Login is limited to five attempts per 15 minutes per source.
 - Roles: admin can manage pricing and read audit logs; operations can manage order manual-review flags; support can view operational data. All roles can view orders and dashboard metrics.
 - Manual review flags do not cancel or retry provider issuance. Provider polling continues and will not overwrite an order's manual-review state.
