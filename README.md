@@ -19,11 +19,13 @@ The development/bootstrap branch contains:
 - Flutterwave checkout initialization and signed webhook transaction verification.
 - Kripicard Mastercard issuance after verified payment, including pending-issuance tracking and a protected status-poll endpoint.
 - Storefront checkout connected to the catalogue, order API, and Flutterwave redirect.
+- Admin console with scrypt password authentication, 12-hour database sessions, CSRF protection, role-based access, order review, pricing configuration, and audit history.
+- One-time administrator bootstrap utility and migration 003.
 
 The branch has passed npm run typecheck and npm run build on the server's temporary verification clone. It has not been deployed to the production web root.
 
 ## Remaining implementation
-- Admin authentication, roles, pricing management, and operational screens.
+- Customer account/order ownership and card management.
 - Customer account/order ownership and card management.
 - Balance lookup using a protected internal card mapping.
 - Email notifications and approved card-secret delivery design.
