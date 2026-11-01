@@ -7,6 +7,13 @@
 - Use separate credentials for development, staging, and production.
 - Restrict file permissions on environment files and never serve them from the web root.
 
+## Admin-managed provider credentials
+- Provider credentials stored in the database must use AES-256-GCM with a unique random 96-bit IV per encryption and authenticated ciphertext.
+- APP_ENCRYPTION_KEY must be a protected, base64-encoded 32-byte key outside source control and outside the web root. Back it up through the approved secret-management process; loss of the key makes stored credentials unrecoverable.
+- API reads return configuration status only. Never return decrypted credentials, even to administrators; credential fields are write-only and blank submissions retain existing values.
+- Audit only provider name, changed field names, environment and verification outcome. Never audit credential contents.
+- Connection checks must be non-transactional. Never create a card or initiate a charge as a credential test.
+
 ## Card data
 - Do not log PAN, CVV, expiry, API keys, or authentication secrets.
 - Minimize card-data retention. Prefer provider card IDs or tokenized identifiers over storing full PAN.

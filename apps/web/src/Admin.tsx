@@ -6,6 +6,7 @@ type Order = {
   order_status: string; payment_status: string; fulfilment_status: string; created_at: string;
   issuance_status: string | null; last4: string | null;
 };
+type ProviderStatus = { provider: "flutterwave" | "kripicard" | "smtp"; configured: boolean; configuredFields: string[]; environment: string; verificationStatus: string; lastVerifiedAt: string | null };
 type Pricing = {
   settings: { currency: string; custom_enabled: number; custom_min: number | null; custom_max: number | null; custom_step: number | null } | null;
   denominations: Array<{ amount: number; is_enabled: number }>;
@@ -43,6 +44,8 @@ export default function AdminApp() {
   const [customStep, setCustomStep] = useState("10");
   const [denominations, setDenominations] = useState<Array<{ amount: number; enabled: boolean }>>([]);
   const [auditEvents, setAuditEvents] = useState<Array<Record<string, unknown>>>([]);
+  const [providerStatuses, setProviderStatuses] = useState<ProviderStatus[]>([]);
+  const [providerForms, setProviderForms] = useState<Record<string, string>>({ environment: "test", kripicardBin: "539502", smtpPort: "587" });
 
   const loadSession = useCallback(async () => {
     try {
@@ -72,6 +75,10 @@ export default function AdminApp() {
     setCustomStep(String(data.settings?.custom_step ?? 10));
     setDenominations(data.denominations.map((item) => ({ amount: Number(item.amount), enabled: Boolean(item.is_enabled) })));
   }, [csrf]);
+  const loadProviders = useCallback(async () => {
+    const data = await request<{ providers: ProviderStatus[] }>("/api/admin/providers", csrf);
+    setProviderStatuses(data.providers);
+  }, [csrf]);
   const loadAudit = useCallback(async () => {
     const data = await request<{ events: Array<Record<string, unknown>> }>("/api/admin/audit", csrf);
     setAuditEvents(data.events);
@@ -80,9 +87,9 @@ export default function AdminApp() {
   useEffect(() => {
     if (!user) return;
     setError("");
-    const task = tab === "overview" ? loadOverview : tab === "orders" ? loadOrders : tab === "pricing" ? loadPricing : loadAudit;
+    const task = tab === "overview" ? loadOverview : tab === "orders" ? loadOrders : tab === "pricing" ? loadPricing : tab === "providers" ? loadProviders : loadAudit;
     void task().catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Unable to load admin data."));
-  }, [user, tab, loadOverview, loadOrders, loadPricing, loadAudit]);
+  }, [user, tab, loadOverview, loadOrders, loadPricing, loadProviders, loadAudit]);
 
   async function signIn(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setBusy(true); setError("");
@@ -129,6 +136,32 @@ export default function AdminApp() {
     finally { setBusy(false); }
   }
 
+  async function saveProvider(provider: "flutterwave" | "kripicard" | "smtp") {
+    setBusy(true); setError("");
+    const values = provider === "flutterwave"
+      ? { secretKey: providerForms.fwSecretKey, webhookSecret: providerForms.fwWebhookSecret, environment: providerForms.environment }
+      : provider === "kripicard"
+        ? { apiKey: providerForms.kripicardApiKey, bin: providerForms.kripicardBin }
+        : { host: providerForms.smtpHost, port: providerForms.smtpPort, user: providerForms.smtpUser, password: providerForms.smtpPassword, from: providerForms.smtpFrom };
+    try {
+      await request("/api/admin/providers/" + provider, csrf, { method: "PUT", body: JSON.stringify(values) });
+      setProviderForms((current) => Object.fromEntries(Object.entries(current).filter(([key]) => !key.toLowerCase().includes(provider === "flutterwave" ? "fwsecret" : provider === "kripicard" ? "kripicardapikey" : "smtppassword"))));
+      await loadProviders();
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to save provider settings."); }
+    finally { setBusy(false); }
+  }
+  async function verifyProvider(provider: "flutterwave" | "kripicard" | "smtp") {
+    setBusy(true); setError("");
+    try {
+      await request("/api/admin/providers/" + provider + "/verify", csrf, { method: "POST", body: "{}" });
+      await loadProviders();
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Provider verification failed."); await loadProviders().catch(() => undefined); }
+    finally { setBusy(false); }
+  }
+  function providerField(key: string, label: string, type = "text", placeholder = "Leave blank to keep current value") {
+    return <label className="provider-field">{label}<input type={type} autoComplete="off" value={providerForms[key] ?? ""} placeholder={placeholder} onChange={(event) => setProviderForms((current) => ({ ...current, [key]: event.target.value }))} /></label>;
+  }
+
   if (checking) return <main className="admin-shell"><p>Checking administrator session…</p></main>;
   if (!user) return (
     <main className="admin-shell admin-login">
@@ -156,7 +189,7 @@ export default function AdminApp() {
       <div className="admin-layout">
         <aside className="admin-sidebar">
           <p className="admin-eyebrow">WORKSPACE</p>
-          {["overview","orders","pricing",...(user.role === "admin" ? ["audit"] : [])].map((item) =>
+          {["overview","orders","pricing",...(user.role === "admin" ? ["providers","audit"] : [])].map((item) =>
             <button key={item} className={tab === item ? "active" : ""} onClick={() => setTab(item)}>{item[0]?.toUpperCase()}{item.slice(1)}</button>)}
         </aside>
         <section className="admin-content">
@@ -202,6 +235,21 @@ export default function AdminApp() {
               <button className="admin-primary" disabled={busy}>{busy ? "Saving…" : "Save pricing configuration"}</button>
             </form> : <p className="admin-muted">Pricing configuration is read-only for your role. Contact an administrator to make changes.</p>}
           </>}
+          {tab === "providers" && user.role === "admin" && <div className="provider-settings">
+            <p className="admin-muted">Credentials are encrypted at rest. Existing secrets are never returned to this page; leave secret fields blank to retain the current value. Configure APP_ENCRYPTION_KEY on the server before saving.</p>
+            {(["flutterwave", "kripicard", "smtp"] as const).map((provider) => {
+              const status = providerStatuses.find((item) => item.provider === provider);
+              return <section className="admin-panel provider-panel" key={provider}>
+                <div className="provider-heading"><div><h2>{provider === "flutterwave" ? "Flutterwave · Payments" : provider === "kripicard" ? "Kripicard · Card issuance" : "SMTP · Email delivery"} </h2><p className="admin-muted">{status?.configured ? "Configured" : "Not configured"} · Verification: {status?.verificationStatus ?? "not tested"}</p></div><span className="admin-role">{status?.environment ?? "production"}</span></div>
+                {provider === "flutterwave" && <><label className="provider-field">Environment<select value={providerForms.environment ?? "test"} onChange={(event) => setProviderForms((current) => ({ ...current, environment: event.target.value }))}><option value="test">Test</option><option value="live">Live</option></select></label>{providerField("fwSecretKey", "Secret key", "password")}{providerField("fwWebhookSecret", "Webhook secret hash", "password")}</>}
+                {provider === "kripicard" && <>{providerField("kripicardApiKey", "API key", "password")}{providerField("kripicardBin", "BIN", "text", "539502")}</>}
+                {provider === "smtp" && <>{providerField("smtpHost", "SMTP host")}{providerField("smtpPort", "SMTP port", "number", "587")}{providerField("smtpUser", "SMTP username")}{providerField("smtpPassword", "SMTP password", "password")}{providerField("smtpFrom", "From address")}</>}
+                <div className="provider-actions"><button className="admin-primary" disabled={busy} onClick={() => void saveProvider(provider)}>Save credentials</button><button disabled={busy || !status?.configured} onClick={() => void verifyProvider(provider)}>Verify connection</button></div>
+                {provider === "kripicard" && <p className="admin-muted">Kripicard verification is disabled until a documented non-issuing verification endpoint is available. No test card will be created.</p>}
+                {status?.lastVerifiedAt && <p className="admin-muted">Last verified: {new Date(status.lastVerifiedAt).toLocaleString()}</p>}
+              </section>;
+            })}
+          </div>}
           {tab === "audit" && <div className="admin-panel admin-audit">
             {auditEvents.map((event, index) => <article key={String(event.id ?? index)}><strong>{String(event.action)}</strong><span>{String(event.email ?? "System")} · {String(event.entity_type)} {String(event.entity_id ?? "")}</span><time>{new Date(String(event.created_at)).toLocaleString()}</time><pre>{JSON.stringify(event.details, null, 2)}</pre></article>)}
             {!auditEvents.length && <p className="admin-muted">No audit events recorded yet.</p>}

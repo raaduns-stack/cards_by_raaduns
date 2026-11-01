@@ -30,7 +30,7 @@ Build a web application for purchasing and receiving virtual payment cards, with
 - Pricing configuration: enable/disable fixed denominations and configure custom amount minimum/maximum/step/currency rules.
 - Email delivery history and operational logs.
 - Staff accounts, roles, and audit trail.
-- Provider configuration/status without exposing secret values.
+- Provider configuration/status without exposing secret values. Admin-only write-once/replace credential fields for Flutterwave, Kripicard and SMTP; encrypted storage and auditable changes.
 
 ## Fulfilment
 - API fulfilment is the default.

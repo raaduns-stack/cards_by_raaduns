@@ -31,13 +31,20 @@
 - Manual review flags do not cancel or retry provider issuance. Provider polling continues and will not overwrite an order's manual-review state.
 - Admin users are created through the one-time bootstrap command; never expose bootstrap credentials in source control or retain them in the runtime environment.
 
+## Provider settings
+- Set APP_ENCRYPTION_KEY to a securely generated base64-encoded 32-byte key in protected server environment configuration before applying migration 004_provider_settings.sql or saving provider credentials.
+- Keep a protected backup of the encryption key. Do not put it in .env files that are served publicly, source control, or chat.
+- Admin > Providers is restricted to the admin role. Configure credentials through the authenticated console; existing values are never displayed.
+- Flutterwave verification uses its read-only NGN balance endpoint; SMTP verification uses TLS with certificate validation. Kripicard connection verification is intentionally unavailable until its supplied documentation defines a non-issuing check.
+- Apply the migration as part of a reviewed versioned release. Do not apply migrations to production as an unreviewed ad hoc action.
+
 ## Release checklist
 1. Obtain CTO approval for the release target and production activation.
 2. Install dependencies from the lockfile.
 3. Run typecheck, tests, and production build.
 4. Apply reviewed database migrations with a least-privilege account using npm run migrate --workspace @cards/api.
 5. Create the first administrator once: set ADMIN_EMAIL, ADMIN_DISPLAY_NAME, and a unique ADMIN_PASSWORD (12+ characters) in a protected environment, then run npm run bootstrap-admin --workspace @cards/api. Remove the bootstrap variables immediately afterward. Verify /admin login and remove or rotate the account if bootstrap was run in error.
-6. Configure production environment secrets securely.
+6. Configure production environment secrets securely, including SMTP_HOST, SMTP_PORT=587, SMTP_USER, SMTP_PASSWORD, and SMTP_FROM. Port 587 requires STARTTLS with certificate verification. Run `npm run smtp:verify --workspace @cards/api` from the release directory to verify the connection.
 7. Configure HTTPS and the Flutterwave webhook URL: https://cards.raaduns.com/webhooks/flutterwave
 8. Configure the production reverse proxy and process supervisor in FastPanel.
 9. Configure a scheduled POST to /api/internal/kripicard/poll using the internal job secret.

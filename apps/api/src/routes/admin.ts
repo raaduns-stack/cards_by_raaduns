@@ -3,6 +3,8 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { RowDataPacket } from "mysql2";
 import { z } from "zod";
 import { db } from "../db.js";
+import { decryptConfig, encryptConfig, getProviderConfig, type ProviderName } from "../provider-config.js";
+import nodemailer from "nodemailer";
 
 type AdminRole = "admin" | "operations" | "support";
 type AdminIdentity = { id: number; email: string; displayName: string; role: AdminRole };
@@ -257,6 +259,81 @@ export async function registerAdminRoutes(app: FastifyInstance) {
     } finally { connection.release(); }
   });
 
+  app.get("/api/admin/providers", async (request, reply) => {
+    const identity = await authenticate(request, reply);
+    if (!identity) return reply;
+    if (!allowed(identity, ["admin"], reply)) return reply;
+    const providers: ProviderName[] = ["flutterwave", "kripicard", "smtp"];
+    const [stored] = await db.query<Array<RowDataPacket & { provider: ProviderName; encrypted_config: string; environment: string; verification_status: string; last_verified_at: Date | null }>>("SELECT provider, encrypted_config, environment, verification_status, last_verified_at FROM provider_settings");
+    const result = [];
+    for (const provider of providers) {
+      const row = stored.find((item) => item.provider === provider);
+      const config = row ? decryptConfig(row.encrypted_config) : await getProviderConfig(provider);
+      const required = provider === "flutterwave" ? ["secretKey", "webhookSecret"] : provider === "kripicard" ? ["apiKey"] : ["host", "port", "user", "password"];
+      result.push({ provider, configured: required.every((key) => Boolean(config[key]?.trim())), configuredFields: required.filter((key) => Boolean(config[key]?.trim())), environment: row?.environment ?? config.environment ?? "production", verificationStatus: row?.verification_status ?? "not_tested", lastVerifiedAt: row?.last_verified_at ?? null });
+    }
+    return { providers: result };
+  });
+
+  app.put("/api/admin/providers/:provider", async (request, reply) => {
+    const identity = await authenticate(request, reply, true);
+    if (!identity) return reply;
+    if (!allowed(identity, ["admin"], reply)) return reply;
+    const params = z.object({ provider: z.enum(["flutterwave", "kripicard", "smtp"]) }).safeParse(request.params);
+    if (!params.success) return reply.code(404).send({ error: "Unknown provider." });
+    const provider = params.data.provider;
+    const schemas = {
+      flutterwave: z.object({ secretKey: z.string().max(500).optional(), webhookSecret: z.string().max(500).optional(), environment: z.enum(["test", "live"]) }),
+      kripicard: z.object({ apiKey: z.string().max(500).optional(), bin: z.string().regex(/^\d{6}$/).optional() }),
+      smtp: z.object({ host: z.string().trim().max(255).optional(), port: z.coerce.number().int().min(1).max(65535).optional(), user: z.string().trim().max(254).optional(), password: z.string().max(500).optional(), from: z.string().trim().max(254).optional() }),
+    };
+    const parsed = schemas[provider].safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: "Invalid provider configuration." });
+    try {
+      const current = await getProviderConfig(provider);
+      const next = { ...current, ...Object.fromEntries(Object.entries(parsed.data).filter(([, value]) => value !== undefined && value !== "")) } as Record<string, string>;
+      const required = provider === "flutterwave" ? ["secretKey", "webhookSecret"] : provider === "kripicard" ? ["apiKey"] : ["host", "port", "user", "password"];
+      if (!required.every((key) => Boolean(next[key]?.trim()))) return reply.code(400).send({ error: "All required provider fields must be configured before saving." });
+      const environment = provider === "flutterwave" ? (next.environment ?? "test") : "production";
+      await db.execute("INSERT INTO provider_settings (provider, encrypted_config, environment, verification_status, configured_by) VALUES (?, ?, ?, 'not_tested', ?) ON DUPLICATE KEY UPDATE encrypted_config = VALUES(encrypted_config), environment = VALUES(environment), verification_status = 'not_tested', last_verified_at = NULL, configured_by = VALUES(configured_by)", [provider, encryptConfig(next), environment, identity.id]);
+      await audit(identity, request, "provider.credentials_updated", "provider", provider, { configuredFields: required.filter((key) => Boolean(next[key])), environment });
+      return { success: true, message: "Provider credentials saved securely. Secret values are not returned." };
+    } catch (error) {
+      request.log.error({ provider, error: error instanceof Error ? error.message : "unknown" }, "Provider settings save failed");
+      return reply.code(503).send({ error: "Secure provider storage is unavailable. Configure APP_ENCRYPTION_KEY and apply database migrations." });
+    }
+  });
+
+  app.post("/api/admin/providers/:provider/verify", async (request, reply) => {
+    const identity = await authenticate(request, reply, true);
+    if (!identity) return reply;
+    if (!allowed(identity, ["admin"], reply)) return reply;
+    const params = z.object({ provider: z.enum(["flutterwave", "kripicard", "smtp"]) }).safeParse(request.params);
+    if (!params.success) return reply.code(404).send({ error: "Unknown provider." });
+    const provider = params.data.provider;
+    try {
+      const config = await getProviderConfig(provider);
+      if (provider === "kripicard") return reply.code(501).send({ error: "Kripicard has no documented non-issuing credential verification endpoint. Credentials are stored but cannot be safely connection-tested." });
+      if (provider === "smtp") {
+        const port = Number(config.port ?? 587);
+        const transport = nodemailer.createTransport({ host: config.host, port, secure: port === 465, requireTLS: port === 587, auth: { user: config.user, pass: config.password }, tls: { rejectUnauthorized: true }, connectionTimeout: 10000, greetingTimeout: 10000, socketTimeout: 15000 });
+        try { await transport.verify(); } finally { transport.close(); }
+      } else {
+        if (!config.secretKey) return reply.code(400).send({ error: "Flutterwave credentials are not configured." });
+        const response = await fetch("https://api.flutterwave.com/v3/balances/NGN", { headers: { Authorization: "Bearer " + config.secretKey }, signal: AbortSignal.timeout(15000) });
+        if (!response.ok) throw new Error("Flutterwave returned HTTP " + response.status);
+      }
+      await db.execute("UPDATE provider_settings SET verification_status = 'verified', last_verified_at = UTC_TIMESTAMP() WHERE provider = ?", [provider]);
+      await audit(identity, request, "provider.connection_verified", "provider", provider, { success: true });
+      return { success: true, verificationStatus: "verified" };
+    } catch (error) {
+      await db.execute("UPDATE provider_settings SET verification_status = 'failed', last_verified_at = UTC_TIMESTAMP() WHERE provider = ?", [provider]);
+      await audit(identity, request, "provider.connection_verification_failed", "provider", provider, { success: false });
+      request.log.warn({ provider }, "Provider connection verification failed");
+      return reply.code(502).send({ error: "Provider verification failed. Check credentials and network configuration." });
+    }
+  });
+
   app.get("/api/admin/audit", async (request, reply) => {
     const identity = await authenticate(request, reply);
     if (!identity) return reply;
@@ -271,3 +348,5 @@ export async function registerAdminRoutes(app: FastifyInstance) {
     return { events: rows, page: parsed.data.page, pageSize: 50 };
   });
 }
+
+[executed on device: mail.quicrefill.com (657bc0f0-b268-4295-8ef1-fac3aa0eceb5)]
