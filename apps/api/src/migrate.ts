@@ -2,7 +2,7 @@ import "dotenv/config";
 import { readFile } from "node:fs/promises";
 import { db } from "./db.js";
 
-const migrations = ["001_initial.sql", "002_kripicard_issuance.sql"];
+const migrations = ["001_initial.sql", "002_kripicard_issuance.sql", "003_admin_console.sql"];
 try {
   const connection = await db.getConnection();
   try {
