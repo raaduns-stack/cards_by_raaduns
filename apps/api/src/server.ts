@@ -9,6 +9,7 @@ import { registerCatalogRoutes } from "./routes/catalog.js";
 import { registerOrderRoutes } from "./routes/orders.js";
 import { registerPaymentRoutes } from "./routes/payments.js";
 import { registerKripicardRoutes } from "./providers/kripicard.js";
+import { registerAdminRoutes } from "./routes/admin.js";
 
 const env = z.object({
  NODE_ENV: z.enum(["development","test","production"]).default("development"),
@@ -24,6 +25,7 @@ await registerCatalogRoutes(app);
 await registerOrderRoutes(app);
 await registerPaymentRoutes(app);
 await registerKripicardRoutes(app);
+await registerAdminRoutes(app);
 const close=async()=>{await app.close();await db.end();process.exit(0);};
 process.on("SIGINT",close);process.on("SIGTERM",close);
 try{await app.listen({host:"0.0.0.0",port:env.PORT});}catch(error){app.log.error(error);await db.end();process.exit(1);}
