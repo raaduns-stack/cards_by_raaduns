@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import type { RowDataPacket } from "mysql2";
 import { db } from "../db.js";
 
 const createOrderSchema = z.object({
@@ -9,8 +10,8 @@ const createOrderSchema = z.object({
   email: z.string().trim().email().max(254),
 });
 
-type ProductRow = { id: number; code: string };
-type PricingRow = { currency: string; custom_enabled: number; custom_min: number | null; custom_max: number | null; custom_step: number | null };
+type ProductRow = RowDataPacket & { id: number; code: string };
+type PricingRow = RowDataPacket & { currency: string; custom_enabled: number; custom_min: number | null; custom_max: number | null; custom_step: number | null };
 
 export async function registerOrderRoutes(app: FastifyInstance) {
   app.post("/api/orders", async (request, reply) => {
@@ -37,7 +38,7 @@ export async function registerOrderRoutes(app: FastifyInstance) {
         await connection.rollback();
         return reply.code(503).send({ error: "Pricing is not configured." });
       }
-      const [fixed] = await connection.query<Array<{ amount: number }>>(
+      const [fixed] = await connection.query<Array<RowDataPacket & { amount: number }>>(
         "SELECT amount FROM fixed_denominations WHERE amount = ? AND is_enabled = 1",
         [amount],
       );
@@ -78,7 +79,7 @@ export async function registerOrderRoutes(app: FastifyInstance) {
   app.get("/api/orders/:orderId", async (request, reply) => {
     const params = z.object({ orderId: z.string().uuid() }).safeParse(request.params);
     if (!params.success) return reply.code(400).send({ error: "Invalid order ID." });
-    const [rows] = await db.query<Array<{
+    const [rows] = await db.query<Array<RowDataPacket & {
       order_number: string; customer_email: string; currency: string; amount: number;
       order_status: string; payment_status: string; fulfilment_status: string; created_at: Date;
     }>>(
