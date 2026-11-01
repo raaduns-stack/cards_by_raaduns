@@ -163,13 +163,13 @@ function Storefront() {
         <section className="purchase" id="verify-email">
           <p className="eyebrow">EMAIL VERIFICATION</p>
           <h2>Check your inbox</h2>
-          <p className="muted">We sent a six-digit verification code to {email}. Verify that you own this email address before continuing to secure payment.</p>
+          <p className="muted">{otpSent ? `We sent a six-digit verification code to ${email}.` : `We could not send a code to ${email} yet. Request a new code below.`} Verify that you own this email address before continuing to secure payment.</p>
           {otpSent && <form onSubmit={verifyEmailAndContinue}>
             <label className="field-label" htmlFor="otp">Six-digit verification code</label>
             <input id="otp" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" minLength={6} maxLength={6} required value={otp} onChange={(event) => setOtp(event.target.value.replace(/\D/g, "").slice(0, 6))} placeholder="000000" />
             <button className="primary-button" type="submit" disabled={loading || otp.length !== 6}>{loading ? "Verifying…" : "Verify email and continue to payment"}</button>
           </form>}
-          <button className="secondary-button" type="button" disabled={loading} onClick={async () => { setError(""); const response = await fetch("/api/customer/otp/send", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ orderId: verificationOrderId }) }); const result = await response.json() as { error?: string }; if (!response.ok) setError(result.error ?? "Unable to resend code."); else setError("A new verification code has been sent."); }}>Resend verification code</button>
+          <button className="secondary-button" type="button" disabled={loading} onClick={async () => { setError(""); const response = await fetch("/api/customer/otp/send", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ orderId: verificationOrderId }) }); const result = await response.json() as { error?: string }; if (!response.ok) setError(result.error ?? "Unable to resend code."); else { setOtpSent(true); setError("A new verification code has been sent."); } }}>Resend verification code</button>
           {error && <p className="error" role="alert">{error}</p>}
           <p className="notice">The code expires after 10 minutes. Payment cannot start until email ownership is verified.</p>
         </section>
