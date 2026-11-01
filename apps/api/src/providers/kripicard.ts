@@ -70,7 +70,7 @@ export async function issueCardForOrder(orderId: string, logger?: { error: (obj:
         [String(payload.card_id), payload.last_4 ? String(payload.last_4).slice(-4) : null, issuance.id],
       );
       await db.execute(
-        "UPDATE orders SET fulfilment_status = 'completed', order_status = 'fulfilment_pending' WHERE id = ?", [order.id],
+        "UPDATE orders SET fulfilment_status = 'completed', order_status = 'fulfilment_pending' WHERE id = ? AND order_status <> 'manual_review'", [order.id],
       );
       return { status: "active" };
     }
@@ -80,12 +80,12 @@ export async function issueCardForOrder(orderId: string, logger?: { error: (obj:
         [payload.reference ? String(payload.reference) : null, payload.order_id ? String(payload.order_id) : null, issuance.id],
       );
       await db.execute(
-        "UPDATE orders SET fulfilment_status = 'processing', order_status = 'fulfilment_pending' WHERE id = ?", [order.id],
+        "UPDATE orders SET fulfilment_status = 'processing', order_status = 'fulfilment_pending' WHERE id = ? AND order_status <> 'manual_review'", [order.id],
       );
       return { status: "pending" };
     }
     await db.execute("UPDATE issued_cards SET issuance_status = 'manual_review' WHERE id = ?", [issuance.id]);
-    await db.execute("UPDATE orders SET fulfilment_status = 'manual_review', order_status = 'manual_review' WHERE id = ?", [order.id]);
+    await db.execute("UPDATE orders SET fulfilment_status = 'manual_review', order_status = 'manual_review' WHERE id = ? AND order_status <> 'manual_review'", [order.id]);
     logger?.error({ orderId, statusCode, providerCode: payload.code }, "Kripicard issuance requires manual review");
     return { status: "manual_review" };
   } catch (error) {
@@ -119,7 +119,7 @@ export async function pollPendingIssuances(limit = 50) {
         results.push({ orderId: issuance.order_id, status: "active" });
       } else if (statusCode === 200 && payload.status === "refunded") {
         await db.execute("UPDATE issued_cards SET issuance_status = 'refunded' WHERE id = ?", [issuance.id]);
-        await db.execute("UPDATE orders SET fulfilment_status = 'failed', order_status = 'manual_review' WHERE id = ?", [issuance.order_id]);
+        await db.execute("UPDATE orders SET fulfilment_status = 'failed', order_status = 'manual_review' WHERE id = ? AND order_status <> 'manual_review'", [issuance.order_id]);
         results.push({ orderId: issuance.order_id, status: "refunded" });
       } else if (statusCode === 404) {
         await db.execute("UPDATE issued_cards SET issuance_status = 'manual_review' WHERE id = ?", [issuance.id]);
