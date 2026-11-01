@@ -1,9 +1,10 @@
 import type { FastifyInstance } from "fastify";
+import type { RowDataPacket } from "mysql2";
 import { db } from "../db.js";
 
-type ProductRow = { id: number; code: string; name: string; network: string };
-type DenominationRow = { amount: number };
-type SettingsRow = { currency: string; custom_enabled: number; custom_min: number | null; custom_max: number | null; custom_step: number | null };
+type ProductRow = RowDataPacket & { id: number; code: string; name: string; network: string };
+type DenominationRow = RowDataPacket & { amount: number };
+type SettingsRow = RowDataPacket & { currency: string; custom_enabled: number; custom_min: number | null; custom_max: number | null; custom_step: number | null };
 
 export async function registerCatalogRoutes(app: FastifyInstance) {
   app.get("/api/catalog", async (_request, reply) => {
