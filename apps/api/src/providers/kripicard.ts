@@ -54,10 +54,15 @@ export async function issueCardForOrder(orderId: string, logger?: { error: (obj:
   const [details] = await db.query<Array<RowDataPacket & { name_on_card: string; bin: string }>>(
     "SELECT name_on_card, bin FROM issued_cards WHERE id = ?", [issuance.id],
   );
+  const cardConfig = details[0];
+  if (!cardConfig) {
+    await db.execute("UPDATE issued_cards SET issuance_status = 'manual_review' WHERE id = ?", [issuance.id]);
+    return { status: "manual_review" };
+  }
   try {
     const { statusCode, payload } = await providerRequest("/api/external/cards/createcard", {
-      bin: details[0].bin, amount: Number(order.amount),
-      name_on_card: details[0].name_on_card, email: order.customer_email,
+      bin: cardConfig.bin, amount: Number(order.amount),
+      name_on_card: cardConfig.name_on_card, email: order.customer_email,
     });
     if (statusCode === 200 && payload.success === true && payload.card_id) {
       await db.execute(
