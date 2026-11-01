@@ -39,7 +39,8 @@ function verifyPassword(password: string, encoded: string) {
 function cookieValue(request: FastifyRequest, name: string) {
   const header = request.headers.cookie ?? "";
   const item = header.split(";").map((part) => part.trim()).find((part) => part.startsWith(`${name}=`));
-  return item ? decodeURIComponent(item.slice(name.length + 1)) : null;
+  if (!item) return null;
+  try { return decodeURIComponent(item.slice(name.length + 1)); } catch { return null; }
 }
 function cookieOptions(secure: boolean) { return `Path=/api/admin; SameSite=Strict${secure ? "; Secure" : ""}`; }
 function appendCookie(reply: FastifyReply, value: string) {
