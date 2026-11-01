@@ -45,7 +45,7 @@
 3. Run typecheck, tests, and production build.
 4. Apply reviewed database migrations with a least-privilege account using npm run migrate --workspace @cards/api (includes migration 005_customer_email_ownership.sql).
 5. Create the first administrator once: set ADMIN_EMAIL, ADMIN_DISPLAY_NAME, and a unique ADMIN_PASSWORD (12+ characters) in a protected environment, then run npm run bootstrap-admin --workspace @cards/api. Remove the bootstrap variables immediately afterward. Verify /admin login and remove or rotate the account if bootstrap was run in error.
-6. Configure production environment secrets securely, including SMTP_HOST, SMTP_PORT=587, SMTP_USER, SMTP_PASSWORD, and SMTP_FROM. Port 587 requires STARTTLS with certificate verification. Run `npm run smtp:verify --workspace @cards/api` from the release directory to verify the connection.
+6. Configure production environment secrets securely, including a random SESSION_SECRET of at least 32 characters and SMTP_HOST, SMTP_PORT=587, SMTP_USER, SMTP_PASSWORD, and SMTP_FROM. Port 587 requires STARTTLS with certificate verification. Run `npm run smtp:verify --workspace @cards/api` from the release directory to verify the connection.
 7. Configure HTTPS and the Flutterwave webhook URL: https://cards.raaduns.com/webhooks/flutterwave
 8. Configure the production reverse proxy and process supervisor in FastPanel.
 9. Configure a scheduled POST to /api/internal/kripicard/poll using the internal job secret.
