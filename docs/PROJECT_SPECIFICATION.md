@@ -7,12 +7,14 @@ Build a web application for purchasing and receiving virtual payment cards, with
 1. Customer selects a card product/network that is actually available.
 2. Customer selects one of the configured fixed denominations (USD 20, 30, 50, 100, 150, 200) or enters a custom amount within administrator-configured limits.
 3. Customer provides an email address and submits the order.
-4. Backend creates a pending order and requests payment instructions from Flutterwave.
-5. Customer completes payment using the instructions presented by the application.
-6. Backend confirms payment with Flutterwave using verified server-side evidence.
-7. Customer receives a payment confirmation email.
-8. Fulfilment runs through Kripicard API by default. Staff manually handles exceptions through the admin area.
-9. Once card details are available and validated, the application securely stores/associates the provider card record and emails delivery instructions/details to the customer.
+4. Backend creates a pending order and sends a six-digit email OTP.
+5. Customer verifies email ownership; the backend creates a protected customer session.
+6. Backend permits payment initialization only for orders owned by the verified email session.
+7. Customer completes payment using the instructions presented by the application.
+8. Backend confirms payment with Flutterwave using verified server-side evidence.
+9. Customer receives a payment confirmation email.
+10. Fulfilment runs through Kripicard API by default. Staff manually handles exceptions through the admin area.
+11. Once card details are available and validated, the application securely stores/associates the provider card record and emails delivery instructions/details to the customer.
 
 ## Customer areas
 - Buy Card: network/product selection, fixed denominations, custom amount, email, order creation.
@@ -20,6 +22,8 @@ Build a web application for purchasing and receiving virtual payment cards, with
 - My Card: list cards associated with the customer's verified order/email and delivery status.
 - Check Balance: customer enters card number; backend securely maps it to an internal card record and queries the provider. Do not send provider API credentials to the client.
 - Order status and email notifications.
+- Email ownership verification by six-digit OTP before payment; code expires after 10 minutes and is limited to five attempts.
+- Customer order/card endpoints require an authenticated email-verified customer session.
 
 ## Admin areas
 - Dashboard and operational metrics.
