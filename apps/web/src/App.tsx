@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
+import AdminApp from "./Admin.js";
 
 type Catalog = {
   products: Array<{ id: number; code: string; name: string; network: string }>;
@@ -11,7 +12,7 @@ type OrderStatus = {
   status: string; paymentStatus: string; fulfilmentStatus: string;
 };
 
-export default function App() {
+function Storefront() {
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [selectedProduct, setSelectedProduct] = useState("");
   const [selectedAmount, setSelectedAmount] = useState<number | null>(null);
@@ -177,4 +178,8 @@ export default function App() {
       <footer><span>© {new Date().getFullYear()} Cards by Raaduns</span><span>Secure virtual card services</span></footer>
     </main>
   );
+}
+
+export default function App() {
+  return window.location.pathname.startsWith("/admin") ? <AdminApp /> : <Storefront />;
 }
