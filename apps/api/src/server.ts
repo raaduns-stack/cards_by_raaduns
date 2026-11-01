@@ -7,6 +7,7 @@ import { z } from "zod";
 import { db } from "./db.js";
 import { registerCatalogRoutes } from "./routes/catalog.js";
 import { registerOrderRoutes } from "./routes/orders.js";
+import { registerPaymentRoutes } from "./routes/payments.js";
 
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
@@ -27,22 +28,19 @@ await app.register(cors, {
 });
 await app.register(rateLimit, { max: 100, timeWindow: "1 minute" });
 
-app.get("/health", async () => {
+app.get("/health", async (_request, reply) => {
   try {
     await db.query("SELECT 1");
     return { status: "ok", service: "cards-api", database: "connected", environment: env.NODE_ENV };
   } catch {
-    return { status: "degraded", service: "cards-api", database: "unavailable" };
+    reply.code(503);\n    return { status: "degraded", service: "cards-api", database: "unavailable" };
   }
 });
 await registerCatalogRoutes(app);
 await registerOrderRoutes(app);
+await registerPaymentRoutes(app);
 
-// Provider webhooks stay disabled until signature verification and idempotency are implemented.
-app.post("/webhooks/flutterwave", async (_request, reply) =>
-  reply.code(501).send({ error: "Flutterwave webhook integration is not enabled yet." }));
-app.post("/webhooks/kripicard", async (_request, reply) =>
-  reply.code(501).send({ error: "Kripicard webhook integration is not enabled yet." }));
+// Kripicard webhook integration is added with the issuer event contract.
 
 const close = async () => {
   await app.close();
