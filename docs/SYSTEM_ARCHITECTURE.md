@@ -60,3 +60,9 @@ The configured web root is /var/www/raaduns_com_usr/data/www/cards.raaduns.com. 
 - Provider settings use a provider selector and one focused configuration panel rather than rendering every provider form in a horizontal/stacked list.
 - Provider field state is derived from server-returned configured-field metadata. Draft edits are shown separately as unsaved changes. Secret values remain write-only; the browser never receives decrypted credentials.
 - Provider metadata must report configured optional fields such as Kripicard BIN and SMTP sender address so the UI does not mislabel persisted values as missing.
+## Admin fulfilment workspace
+- `/admin/fulfilment` lists payment-verified orders and their fulfilment/issuance states, including provider references, provider order IDs, masked last-four values, and timestamps.
+- `GET /api/admin/fulfilment` is authenticated and read-only. It never returns full PAN, CVV, provider credentials, or card secrets.
+- Pending Kripicard issuance continues through the protected internal polling job. The admin UI must not blindly retry card creation when a provider outcome may be pending or ambiguous; unresolved outcomes remain in manual review.
+
+[executed on device: mail.quicrefill.com (657bc0f0-b268-4295-8ef1-fac3aa0eceb5)]
