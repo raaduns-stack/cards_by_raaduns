@@ -64,6 +64,8 @@ export default function AdminApp() {
   const [fulfilmentItems, setFulfilmentItems] = useState<FulfilmentItem[]>([]);
   const [customers, setCustomers] = useState<AdminCustomer[]>([]);
   const [customerSearch, setCustomerSearch] = useState("");
+  const [customerPage, setCustomerPage] = useState(1);
+  const [customerTotal, setCustomerTotal] = useState(0);
   const [selectedCustomer, setSelectedCustomer] = useState<CustomerDetail | null>(null);
   const [providerStatuses, setProviderStatuses] = useState<ProviderStatus[]>([]);
   const [providerNotice, setProviderNotice] = useState("");
@@ -107,10 +109,10 @@ export default function AdminApp() {
     if (btcpay) setProviderForms((current) => ({ ...current, btcpayServerUrl: btcpay.serverUrl ?? "https://btcpay.scrapee.uk", btcpayStoreId: btcpay.storeId ?? "", btcpayEnabled: btcpay.enabled ?? "false" }));
   }, [csrf]);
   const loadCustomers = useCallback(async () => {
-    const query = new URLSearchParams({ search: customerSearch });
-    const data = await request<{ customers: AdminCustomer[] }>(`/api/admin/customers?${query}`, csrf);
-    setCustomers(data.customers);
-  }, [csrf, customerSearch]);
+    const query = new URLSearchParams({ search: customerSearch, page: String(customerPage) });
+    const data = await request<{ customers: AdminCustomer[]; total: number }>(`/api/admin/customers?${query}`, csrf);
+    setCustomers(data.customers); setCustomerTotal(data.total);
+  }, [csrf, customerSearch, customerPage]);
   const openCustomer = useCallback(async (customerId: number) => {
     const data = await request<CustomerDetail>(`/api/admin/customers/${customerId}`, csrf);
     setSelectedCustomer(data);
@@ -238,7 +240,7 @@ export default function AdminApp() {
           {tab === "overview" && <DashboardPage overview={overview} />}
           {tab === "orders" && <OrdersPage orders={orders} search={search} onSearch={setSearch} status={status} onStatus={setStatus} onApply={() => void loadOrders()} onReview={(order) => setSelectedOrder(order.id)} canReview={user.role !== "support"} selectedOrder={selectedOrder} reviewNote={reviewNote} onReviewNote={setReviewNote} onSubmitReview={markManualReview} onCancelReview={() => setSelectedOrder("")} busy={busy} />}
           {tab === "fulfilment" && <FulfilmentPage items={fulfilmentItems} />}
-          {tab === "customers" && <CustomersPage customers={customers} search={customerSearch} onSearch={setCustomerSearch} onApply={() => void loadCustomers()} selected={selectedCustomer} onOpen={(id) => void openCustomer(id)} onClose={() => setSelectedCustomer(null)} />}
+          {tab === "customers" && <CustomersPage customers={customers} search={customerSearch} onSearch={(value) => { setCustomerSearch(value); setCustomerPage(1); }} onApply={() => void loadCustomers()} page={customerPage} total={customerTotal} onPage={setCustomerPage} selected={selectedCustomer} onOpen={(id) => void openCustomer(id)} onClose={() => setSelectedCustomer(null)} />}
           {tab === "pricing" && <PricingPage pricing={pricing} isAdmin={user.role === "admin"} busy={busy} exchangeRate={exchangeRate} setExchangeRate={setExchangeRate} issuanceFee={issuanceFee} setIssuanceFee={setIssuanceFee} grossProfit={grossProfit} setGrossProfit={setGrossProfit} customEnabled={customEnabled} setCustomEnabled={setCustomEnabled} customMin={customMin} setCustomMin={setCustomMin} customMax={customMax} setCustomMax={setCustomMax} customStep={customStep} setCustomStep={setCustomStep} denominations={denominations} setDenominations={setDenominations} onSubmit={savePricing} />}
           {tab === "providers" && user.role === "admin" && <ProvidersPage statuses={providerStatuses} forms={providerForms} busy={busy} notice={providerNotice} onChange={(key, value) => setProviderForms((current) => ({ ...current, [key]: value }))} onSave={(provider: ProviderName) => saveProvider(provider)} onVerify={(provider: ProviderName) => void verifyProvider(provider)} />}
           {tab === "audit" && <AuditPage events={auditEvents} />}
