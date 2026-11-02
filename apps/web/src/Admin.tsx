@@ -4,6 +4,7 @@ import DashboardPage from "./pages/admin/DashboardPage.js";
 import OrdersPage from "./pages/admin/OrdersPage.js";
 import PricingPage from "./pages/admin/PricingPage.js";
 import AuditPage from "./pages/admin/AuditPage.js";
+import FulfilmentPage, { type FulfilmentItem } from "./pages/admin/FulfilmentPage.js";
 import OrderTable, { type AdminOrder } from "./pages/admin/OrderTable.js";
 
 
@@ -59,6 +60,7 @@ export default function AdminApp() {
   const [customStep, setCustomStep] = useState("10");
   const [denominations, setDenominations] = useState<Array<{ amount: number; enabled: boolean }>>([]);
   const [auditEvents, setAuditEvents] = useState<Array<Record<string, unknown>>>([]);
+  const [fulfilmentItems, setFulfilmentItems] = useState<FulfilmentItem[]>([]);
   const [providerStatuses, setProviderStatuses] = useState<ProviderStatus[]>([]);
   const [providerNotice, setProviderNotice] = useState("");
   const [providerForms, setProviderForms] = useState<Record<string, string>>({ environment: "test", kripicardBin: "539502", smtpPort: "587", btcpayServerUrl: "https://btcpay.scrapee.uk", btcpayEnabled: "false", btcpayBtcEnabled: "true", btcpayLtcEnabled: "true" });
@@ -100,6 +102,10 @@ export default function AdminApp() {
     const btcpay = data.providers.find((item) => item.provider === "btcpay")?.settings;
     if (btcpay) setProviderForms((current) => ({ ...current, btcpayServerUrl: btcpay.serverUrl ?? "https://btcpay.scrapee.uk", btcpayStoreId: btcpay.storeId ?? "", btcpayEnabled: btcpay.enabled ?? "false" }));
   }, [csrf]);
+  const loadFulfilment = useCallback(async () => {
+    const data = await request<{ items: FulfilmentItem[] }>("/api/admin/fulfilment", csrf);
+    setFulfilmentItems(data.items);
+  }, [csrf]);
   const loadAudit = useCallback(async () => {
     const data = await request<{ events: Array<Record<string, unknown>> }>("/api/admin/audit", csrf);
     setAuditEvents(data.events);
@@ -108,9 +114,9 @@ export default function AdminApp() {
   useEffect(() => {
     if (!user) return;
     setError("");
-    const task = tab === "overview" ? loadOverview : tab === "orders" ? loadOrders : tab === "pricing" ? loadPricing : tab === "providers" ? loadProviders : loadAudit;
+    const task = tab === "overview" ? loadOverview : tab === "orders" ? loadOrders : tab === "pricing" ? loadPricing : tab === "providers" ? loadProviders : tab === "fulfilment" ? loadFulfilment : loadAudit;
     void task().catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Unable to load admin data."));
-  }, [user, tab, loadOverview, loadOrders, loadPricing, loadProviders, loadAudit]);
+  }, [user, tab, loadOverview, loadOrders, loadPricing, loadProviders, loadFulfilment, loadAudit]);
 
   async function signIn(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setBusy(true); setError("");
@@ -210,7 +216,7 @@ export default function AdminApp() {
       <div className="admin-layout">
         <aside className="admin-sidebar">
           <p className="admin-eyebrow">WORKSPACE</p>
-          {["overview","orders","pricing",...(user.role === "admin" ? ["providers","audit"] : [])].map((item) =>
+          {["overview","orders","fulfilment","pricing",...(user.role === "admin" ? ["providers","audit"] : [])].map((item) =>
             <button key={item} className={tab === item ? "active" : ""} onClick={() => navigateToTab(item)}>{item[0]?.toUpperCase()}{item.slice(1)}</button>)}
         </aside>
         <section className="admin-content">
@@ -218,6 +224,7 @@ export default function AdminApp() {
           {error && <p className="admin-error" role="alert">{error}</p>}
           {tab === "overview" && <DashboardPage overview={overview} />}
           {tab === "orders" && <OrdersPage orders={orders} search={search} onSearch={setSearch} status={status} onStatus={setStatus} onApply={() => void loadOrders()} onReview={(order) => setSelectedOrder(order.id)} canReview={user.role !== "support"} selectedOrder={selectedOrder} reviewNote={reviewNote} onReviewNote={setReviewNote} onSubmitReview={markManualReview} onCancelReview={() => setSelectedOrder("")} busy={busy} />}
+          {tab === "fulfilment" && <FulfilmentPage items={fulfilmentItems} />}
           {tab === "pricing" && <PricingPage pricing={pricing} isAdmin={user.role === "admin"} busy={busy} exchangeRate={exchangeRate} setExchangeRate={setExchangeRate} issuanceFee={issuanceFee} setIssuanceFee={setIssuanceFee} grossProfit={grossProfit} setGrossProfit={setGrossProfit} customEnabled={customEnabled} setCustomEnabled={setCustomEnabled} customMin={customMin} setCustomMin={setCustomMin} customMax={customMax} setCustomMax={setCustomMax} customStep={customStep} setCustomStep={setCustomStep} denominations={denominations} setDenominations={setDenominations} onSubmit={savePricing} />}
           {tab === "providers" && user.role === "admin" && <ProvidersPage statuses={providerStatuses} forms={providerForms} busy={busy} notice={providerNotice} onChange={(key, value) => setProviderForms((current) => ({ ...current, [key]: value }))} onSave={(provider: ProviderName) => saveProvider(provider)} onVerify={(provider: ProviderName) => void verifyProvider(provider)} />}
           {tab === "audit" && <AuditPage events={auditEvents} />}
@@ -230,5 +237,7 @@ export default function AdminApp() {
 function resolveAdminRoute(pathname: string): string {
   const normalized = pathname.endsWith("/") ? pathname.slice(0, -1) : pathname;
   const segment = normalized.split("/").pop() ?? "";
-  return ["orders", "pricing", "providers", "audit"].includes(segment) ? segment : "overview";
+  return ["orders", "fulfilment", "pricing", "providers", "audit"].includes(segment) ? segment : "overview";
 }
+
+[executed on device: mail.quicrefill.com (657bc0f0-b268-4295-8ef1-fac3aa0eceb5)]
