@@ -29,4 +29,5 @@
 - Apply least-privilege database credentials and parameterized queries.
 - Maintain audit records for pricing, order, fulfilment, and staff actions.
 - Use HTTPS and security headers.
-- Do not publish a "No KYC required" claim until confirmed by issuer/provider and applicable requirements.
+- CTO-approved public product copy includes “NO KYC REQUIRED” (approved 2026-11-02). This approval governs the marketing statement; it does not waive issuer onboarding conditions, provider rules, customer eligibility checks, or applicable law. Product operations must not bypass a required check.
+- Visa imagery may be used for promotional illustration only. Do not enable Visa checkout or issue Visa cards until the provider and issuance route are verified and explicitly activated.
