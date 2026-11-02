@@ -11,9 +11,9 @@ export type CustomerOrder = {
 export type CustomerDetail = { customer: Pick<AdminCustomer, "id" | "email" | "email_verified_at" | "created_at">; orders: CustomerOrder[] };
 const date = (value: string | null) => value ? new Date(value).toLocaleString() : "—";
 const status = (value: string) => value.replaceAll("_", " ");
-export default function CustomersPage({ customers, search, onSearch, onApply, selected, onOpen, onClose }: {
+export default function CustomersPage({ customers, search, onSearch, onApply, page, total, onPage, selected, onOpen, onClose }: {
   customers: AdminCustomer[]; search: string; onSearch: (value: string) => void;
-  onApply: () => void; selected: CustomerDetail | null; onOpen: (id: number) => void; onClose: () => void;
+  onApply: () => void; page: number; total: number; onPage: (page: number) => void; selected: CustomerDetail | null; onOpen: (id: number) => void; onClose: () => void;
 }) {
   return <>
     <div className="admin-filters"><input aria-label="Search customers" placeholder="Search verified customer email" type="search" value={search} onChange={(event) => onSearch(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") onApply(); }} /><button onClick={onApply}>Search customers</button></div>
@@ -30,5 +30,6 @@ export default function CustomersPage({ customers, search, onSearch, onApply, se
       {customers.map((customer) => <tr key={customer.id}><td><strong>{customer.email}</strong><small>Email verified {date(customer.email_verified_at)}</small></td><td>{customer.order_count}</td><td>{customer.paid_order_count}</td><td>{customer.issued_card_count}</td><td>{date(customer.last_order_at)}</td><td>{date(customer.created_at)}</td><td><button onClick={() => onOpen(customer.id)}>View customer</button></td></tr>)}
       {!customers.length && <tr><td colSpan={7}>No verified customer records found.</td></tr>}
     </tbody></table></div>
+    <div className="admin-filters" style={{ justifyContent: "space-between", marginTop: 16 }}><span className="admin-muted">Showing {total === 0 ? 0 : (page - 1) * 50 + 1}–{Math.min(page * 50, total)} of {total} customers</span><div><button disabled={page <= 1} onClick={() => onPage(page - 1)}>Previous</button><button disabled={page * 50 >= total} onClick={() => onPage(page + 1)}>Next</button></div></div>
   </>;
 }
