@@ -91,6 +91,72 @@ export async function registerPaymentRoutes(app: FastifyInstance) {
     }
   });
 
+  app.post("/api/payments/flutterwave/reconcile", async (request, reply) => {
+    const customer = await authenticateCustomer(request, reply, true);
+    if (!customer) return reply;
+    const parsed = initializeSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: "A valid orderId is required." });
+    const config = await getProviderConfig("flutterwave");
+    if (!config.secretKey) return reply.code(503).send({ error: "Flutterwave is not configured." });
+
+    const [orders] = await db.query<OrderRow[]>(
+      "SELECT o.id, o.order_number, o.customer_email, o.payment_currency, COALESCE(o.payment_amount_ngn, o.amount) AS payment_amount, o.payment_status FROM orders o WHERE o.id = ? AND o.customer_id = ?",
+      [parsed.data.orderId, customer.id],
+    );
+    const order = orders[0];
+    if (!order) return reply.code(404).send({ error: "Order not found." });
+    if (order.payment_status === "successful") return { status: "paid", message: "Payment is already confirmed." };
+
+    const [attempts] = await db.query<Array<RowDataPacket & { id: number; provider_reference: string; status: string }>>(
+      "SELECT id, provider_reference, status FROM payment_attempts WHERE order_id = ? AND provider = 'flutterwave' AND status IN ('initialized','pending') ORDER BY id DESC LIMIT 1",
+      [order.id],
+    );
+    const attempt = attempts[0];
+    if (!attempt?.provider_reference) return reply.code(409).send({ error: "There is no unresolved Flutterwave payment attempt for this order." });
+
+    try {
+      const response = await fetch(`${apiBase}/transactions/verify_by_reference?tx_ref=${encodeURIComponent(attempt.provider_reference)}`, {
+        headers: { Authorization: `Bearer ${config.secretKey}`, Accept: "application/json" },
+        signal: AbortSignal.timeout(15000),
+      });
+      const result = await response.json().catch(() => ({})) as { status?: string; data?: { id?: number | string; tx_ref?: string; status?: string; currency?: string; amount?: number | string } };
+      if (!response.ok || result.status !== "success" || !result.data) return reply.code(202).send({ status: "pending", message: "Flutterwave has not returned a final transaction record yet. Check again shortly." });
+      const transaction = result.data;
+      const referenceMatches = transaction.tx_ref === attempt.provider_reference;
+      const amountMatches = Number.isFinite(Number(transaction.amount)) && Math.abs(Number(transaction.amount) - Number(order.payment_amount)) < 0.01;
+      const currencyMatches = transaction.currency === order.payment_currency;
+
+      if (transaction.status === "successful" && referenceMatches && amountMatches && currencyMatches) {
+        const connection = await db.getConnection();
+        try {
+          await connection.beginTransaction();
+          await connection.execute("UPDATE payment_attempts SET status = 'successful', provider_transaction_id = ? WHERE id = ? AND status <> 'successful'", [String(transaction.id ?? ""), attempt.id]);
+          await connection.execute("UPDATE orders SET payment_status = 'successful', order_status = 'paid', fulfilment_status = 'queued' WHERE id = ? AND payment_status <> 'successful'", [order.id]);
+          await enqueuePaymentReceipt(connection, { id: order.id, order_number: order.order_number, customer_email: order.customer_email, currency: order.payment_currency, amount: order.payment_amount });
+          await connection.commit();
+        } catch (error) { await connection.rollback(); throw error; }
+        finally { connection.release(); }
+        await issueCardForOrder(order.id, request.log);
+        return { status: "paid", message: "Payment verified. Card fulfilment is now in progress." };
+      }
+
+      if (["failed", "cancelled"].includes(transaction.status ?? "")) {
+        await db.execute("UPDATE payment_attempts SET status = ? WHERE id = ? AND status IN ('initialized','pending')", [transaction.status === "cancelled" ? "cancelled" : "failed", attempt.id]);
+        return { status: "failed", message: "This payment attempt was not successful. You can safely retry checkout." };
+      }
+
+      if (transaction.status === "successful" && (!referenceMatches || !amountMatches || !currencyMatches)) {
+        await db.execute("UPDATE orders SET order_status = 'manual_review', fulfilment_status = 'manual_review' WHERE id = ? AND payment_status <> 'successful'", [order.id]);
+        request.log.error({ orderId: order.id, referenceMatches, amountMatches, currencyMatches }, "Flutterwave reconciliation returned a transaction that did not match the order");
+        return reply.code(409).send({ status: "review", message: "The payment details need manual review. Do not pay again." });
+      }
+      return reply.code(202).send({ status: "pending", message: "Payment is not yet confirmed. Check again shortly." });
+    } catch (error) {
+      request.log.error({ orderId: order.id, error }, "Flutterwave payment reconciliation failed");
+      return reply.code(502).send({ error: "Unable to check payment status right now. Please try again shortly." });
+    }
+  });
+
   app.post("/webhooks/flutterwave", async (request, reply) => {
     const providerConfig = await getProviderConfig("flutterwave");
     if (!isValidWebhookHash(request.headers["verif-hash"] as string | undefined, providerConfig.webhookSecret)) {

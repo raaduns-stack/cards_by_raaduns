@@ -23,6 +23,7 @@ Cards by Raaduns sells virtual payment cards. Customers select a card network wh
 - Treat credentials shared in chat as compromised and rotate them before use.
 - Verify payment server-side using provider-supported webhook signature verification and/or transaction verification. Never trust browser payment claims.
 - Make webhook processing idempotent and persist event identifiers/status transitions.
+- Customer payment recovery must reconcile ambiguous Flutterwave attempts by merchant `tx_ref` using the provider verification-by-reference endpoint before allowing a replacement payment attempt. The backend must match reference, status, currency, and exact order amount; browser redirects are never proof of payment.
 - Restrict admin access with authentication, authorization, audit logging, and secure session handling.
 - Do not log full card numbers, CVV, API keys, passwords, or webhook secrets.
 - Use HTTPS for all customer and provider traffic.

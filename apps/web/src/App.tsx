@@ -36,6 +36,7 @@ function Storefront() {
   const [order, setOrder] = useState<OrderStatus | null>(null);
   const [orderId, setOrderId] = useState("");
   const [checkingStatus, setCheckingStatus] = useState(false);
+  const [paymentMessage, setPaymentMessage] = useState("");
   const [customerEmail, setCustomerEmail] = useState("");
   const [otp, setOtp] = useState("");
   const [otpSent, setOtpSent] = useState(false);
@@ -100,6 +101,24 @@ function Storefront() {
   async function signOutCustomer() {
     await fetch("/api/customer/auth/logout", { method: "POST", credentials: "include", headers: { "x-csrf-token": csrfToken } });
     setCustomerVerified(false); setCsrfToken(""); setCustomerOrders([]); setOtpSent(false);
+  }
+
+  async function reconcilePayment(id: string) {
+    setCheckingStatus(true); setPaymentMessage("");
+    try {
+      const response = await fetch("/api/payments/flutterwave/reconcile", {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json", "x-csrf-token": csrfToken },
+        body: JSON.stringify({ orderId: id }),
+      });
+      const payload = await response.json() as { status?: string; message?: string; error?: string };
+      if (!response.ok && response.status !== 202) throw new Error(payload.error ?? "Unable to reconcile payment.");
+      setPaymentMessage(payload.message ?? "Payment status updated.");
+      await loadCustomerOrders();
+      if (payload.status === "paid") await refreshOrderStatus(id);
+    } catch (reason) {
+      setPaymentMessage(reason instanceof Error ? reason.message : "Unable to check payment status.");
+    } finally { setCheckingStatus(false); }
   }
 
   async function refreshOrderStatus(id: string) {
@@ -210,7 +229,8 @@ function Storefront() {
           <p className="fine-print">Mastercard is available now. Visa is coming soon. Card value is issued in USD; payment is collected in the currency shown at checkout. Issuance begins only after payment is verified.</p>
         </section>
         {customerVerified && <section className="customer-orders" id="my-card"><div className="orders-heading"><div><p className="eyebrow">CUSTOMER ACCOUNT</p><h2>My orders</h2></div><button type="button" onClick={() => void loadCustomerOrders()}>Refresh</button></div>
-          {customerOrders.length === 0 ? <p className="muted">No orders associated with this email yet.</p> : customerOrders.map((item) => <article className="customer-order" key={item.id}><div><strong>{item.order_number}</strong><span>Card: {item.card_amount_usd === null ? "Value pending" : "$" + Number(item.card_amount_usd).toFixed(2) + " USD"}</span><span>Pay: {Number(item.payment_amount).toLocaleString("en-NG", { style: "currency", currency: item.payment_currency })}</span></div><div><span>Payment: {item.payment_status.replaceAll("_", " ")}</span><span>Fulfilment: {item.fulfilment_status.replaceAll("_", " ")}</span></div><div><span>Order: {item.order_status.replaceAll("_", " ")}</span><span>{item.last4 ? `Card ending ${item.last4}` : "Card not yet available"}</span></div><div className="customer-order-actions"><button type="button" onClick={() => void refreshOrderStatus(item.id)}>View status</button>{item.payment_status !== "successful" && item.latest_payment_url && <a className="resume-payment" href={item.latest_payment_url}>Resume payment</a>}{item.payment_status !== "successful" && (item.latest_payment_status === "failed" || !item.latest_payment_status) && <button type="button" onClick={() => { setOrderId(item.id); if (item.latest_payment_provider === "btcpay" || item.latest_payment_provider === "flutterwave") setPaymentMethod(item.latest_payment_provider); if (item.card_amount_usd && !catalog?.denominations.some((d) => d.amountUsd === Number(item.card_amount_usd))) setCustomAmount(String(item.card_amount_usd)); else { setSelectedAmount(Number(item.card_amount_usd)); setCustomAmount(""); } window.scrollTo({ top: 0, behavior: "smooth" }); }}>Retry checkout</button>}{item.payment_status !== "successful" && item.latest_payment_status === "pending" && !item.latest_payment_url && <span className="payment-reconciling">Payment attempt is being reconciled. Check status before retrying.</span>}</div></article>)}
+          {paymentMessage && <p className="notice" role="status">{paymentMessage}</p>}
+          {customerOrders.length === 0 ? <p className="muted">No orders associated with this email yet.</p> : customerOrders.map((item) => <article className="customer-order" key={item.id}><div><strong>{item.order_number}</strong><span>Card: {item.card_amount_usd === null ? "Value pending" : "$" + Number(item.card_amount_usd).toFixed(2) + " USD"}</span><span>Pay: {Number(item.payment_amount).toLocaleString("en-NG", { style: "currency", currency: item.payment_currency })}</span></div><div><span>Payment: {item.payment_status.replaceAll("_", " ")}</span><span>Fulfilment: {item.fulfilment_status.replaceAll("_", " ")}</span></div><div><span>Order: {item.order_status.replaceAll("_", " ")}</span><span>{item.last4 ? `Card ending ${item.last4}` : "Card not yet available"}</span></div><div className="customer-order-actions"><button type="button" onClick={() => void refreshOrderStatus(item.id)}>View status</button>{item.payment_status !== "successful" && item.latest_payment_url && <a className="resume-payment" href={item.latest_payment_url}>Resume payment</a>}{item.payment_status !== "successful" && (item.latest_payment_status === "failed" || !item.latest_payment_status) && <button type="button" onClick={() => { setOrderId(item.id); if (item.latest_payment_provider === "btcpay" || item.latest_payment_provider === "flutterwave") setPaymentMethod(item.latest_payment_provider); if (item.card_amount_usd && !catalog?.denominations.some((d) => d.amountUsd === Number(item.card_amount_usd))) setCustomAmount(String(item.card_amount_usd)); else { setSelectedAmount(Number(item.card_amount_usd)); setCustomAmount(""); } window.scrollTo({ top: 0, behavior: "smooth" }); }}>Retry checkout</button>}{item.payment_status !== "successful" && item.latest_payment_status === "pending" && !item.latest_payment_url && <><span className="payment-reconciling">Payment attempt is being reconciled. Do not pay again until checked.</span><button type="button" disabled={checkingStatus} onClick={() => void reconcilePayment(item.id)}>{checkingStatus ? "Checking…" : "Check payment status"}</button></>}</div></article>)}
         </section>}
         <footer className="site-footer"><span>© {new Date().getFullYear()} Cards by Raaduns</span><span>Virtual cards, made simple.</span></footer>
       </>}
