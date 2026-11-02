@@ -65,4 +65,8 @@ The configured web root is /var/www/raaduns_com_usr/data/www/cards.raaduns.com. 
 - `GET /api/admin/fulfilment` is authenticated and read-only. It never returns full PAN, CVV, provider credentials, or card secrets.
 - Pending Kripicard issuance continues through the protected internal polling job. The admin UI must not blindly retry card creation when a provider outcome may be pending or ambiguous; unresolved outcomes remain in manual review.
 
-[executed on device: mail.quicrefill.com (657bc0f0-b268-4295-8ef1-fac3aa0eceb5)]
+## Admin customer workspace
+- /admin/customers lists verified customer identities from the customers table, with order and issued-card counts derived from orders.customer_id associations.
+- GET /api/admin/customers supports bounded email search and 50-record pagination. GET /api/admin/customers/:customerId returns one verified customer and up to 100 associated orders.
+- Customer details expose payment/fulfilment states and masked last-four values only. They must never expose PAN, CVV, expiry, OTP hashes/codes, session tokens, provider credentials, or stored card secrets.
+- Customer records are created only after the existing email OTP flow verifies ownership. Unclaimed orders are not silently attributed to a customer.
