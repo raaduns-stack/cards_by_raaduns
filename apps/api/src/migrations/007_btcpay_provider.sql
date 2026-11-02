@@ -1,0 +1,1 @@
+ALTER TABLE provider_settings MODIFY COLUMN provider ENUM('flutterwave','kripicard','smtp','btcpay') NOT NULL;

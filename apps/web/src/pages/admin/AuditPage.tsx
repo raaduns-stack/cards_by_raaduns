@@ -1,0 +1,4 @@
+type AuditEvent = Record<string, unknown>;
+export default function AuditPage({ events }: { events: AuditEvent[] }) {
+  return <div className="admin-panel admin-audit">{events.map((event, index) => <article key={String(event.id ?? index)}><strong>{String(event.action)}</strong><span>{String(event.email ?? "System")} · {String(event.entity_type)} {String(event.entity_id ?? "")}</span><time>{new Date(String(event.created_at)).toLocaleString()}</time><pre>{JSON.stringify(event.details, null, 2)}</pre></article>)}{!events.length && <p className="admin-muted">No audit events recorded yet.</p>}</div>;
+}

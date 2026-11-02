@@ -13,7 +13,7 @@ Cards by Raaduns sells virtual payment cards. Customers select a card network wh
 - Card provider: Kripicard, standard API account; CTO confirms Kripicard authorised the account for card creation for resale.
 - Fulfilment: API by default; staff manually handles exceptions.
 - Card denominations: USD 20, 30, 50, 100, 150, 200.
-- Custom amount: configurable by administrators; exact limits must be set in admin configuration.
+- Custom amount: enabled and limited to USD 20 minimum, USD 500 maximum, in USD 1 increments. Admin must enforce these approved limits.
 - Customer balance check: customer enters the card number. The backend must securely resolve it to the internal/provider card record; never expose provider credentials or card secrets to the browser.
 - Webhooks: separate endpoints at /webhooks/flutterwave and /webhooks/kripicard.
 
@@ -46,3 +46,24 @@ Cards by Raaduns sells virtual payment cards. Customers select a card network wh
 
 ## Change control
 Any change to an approved business rule, provider, pricing, fulfilment policy, card network, or customer flow requires CTO approval and an update to the relevant specification and decision log.
+## Approved commercial pricing (CTO-confirmed 2026-11-01)
+- Customer payments are collected in Nigerian naira (NGN).
+- Card face value and Kripicard issuance amount remain denominated in US dollars (USD).
+- Kripicard issuance fee is USD 7.00 per card and is added on top of the selected USD card face value before currency conversion.
+- Initial exchange rate is NGN 1,430.00 per USD.
+- Target gross profit is NGN 10,000.00 per card, added after converting card face value plus issuance fee.
+- Pricing formula: `Customer price (NGN) = ((Card face value (USD) + Issuance fee (USD)) × Exchange rate (NGN/USD)) + Gross profit (NGN)`.
+- The NGN 10,000 target is gross profit before Flutterwave transaction charges, taxes, refunds, chargebacks, and other operating costs; it is not a guaranteed net profit.
+- Initial example: USD 20 card → (20 + 7) × 1,430 + 10,000 = NGN 48,610.
+- Exchange rate, issuance fee, and gross profit are configurable by an authorised admin in the Pricing area. The customer-facing storefront displays the NGN price while clearly identifying the USD card face value.
+- Each order stores immutable snapshots of USD face value, issuance fee, exchange rate, gross-profit target, NGN payment currency, and NGN payment amount. Later admin pricing changes must not alter existing orders or payment verification amounts.
+- The backend is authoritative for quote calculation, order creation, Flutterwave initialization/verification, and the USD amount sent to Kripicard. Client-side previews are informational only.
+
+
+## BTCPay payment integration (CTO-approved addition)
+- BTCPay Server instance: `https://btcpay.scrapee.uk`.
+- Supported checkout methods: Bitcoin (BTC) and Litecoin (LTC), controlled independently in admin settings.
+- BTCPay invoices use the order snapshot payment currency and payment amount (NGN), never the USD card face value.
+- Credentials and webhook secret are encrypted at rest using the existing provider-settings encryption key.
+- Webhooks require raw-body HMAC-SHA256 verification, store identity validation, invoice status and amount/currency/order verification, and idempotent event handling.
+- BTCPay remains disabled until admin verification and a controlled test checkout are completed.

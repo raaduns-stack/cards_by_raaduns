@@ -2,7 +2,7 @@ import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "./db.js";
 
-export type ProviderName = "flutterwave" | "kripicard" | "smtp";
+export type ProviderName = "flutterwave" | "kripicard" | "smtp" | "btcpay";
 export type ProviderConfig = Record<string, string>;
 type ConfigRow = RowDataPacket & { encrypted_config: string };
 function encryptionKey() {
@@ -27,6 +27,7 @@ export async function getProviderConfig(provider: ProviderName): Promise<Provide
   const [rows] = await db.query<ConfigRow[]>("SELECT encrypted_config FROM provider_settings WHERE provider = ? LIMIT 1", [provider]);
   if (rows[0]) return decryptConfig(rows[0].encrypted_config);
   if (provider === "flutterwave") return { secretKey: process.env.FLUTTERWAVE_SECRET_KEY ?? "", webhookSecret: process.env.FLUTTERWAVE_WEBHOOK_SECRET ?? "", environment: process.env.FLUTTERWAVE_ENVIRONMENT ?? "test" };
+  if (provider === "btcpay") return { serverUrl: "https://btcpay.scrapee.uk", storeId: "", apiKey: "", webhookSecret: "", enabled: "false", btcEnabled: "true", ltcEnabled: "true" };
   if (provider === "kripicard") return { apiKey: process.env.KRIPICARD_API_KEY ?? "", bin: process.env.KRIPICARD_BIN ?? "539502" };
   return { host: process.env.SMTP_HOST ?? "", port: process.env.SMTP_PORT ?? "587", user: process.env.SMTP_USER ?? "", password: process.env.SMTP_PASSWORD ?? "", from: process.env.SMTP_FROM ?? "" };
 }

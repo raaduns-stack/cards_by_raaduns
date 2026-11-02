@@ -29,6 +29,13 @@
 - Do not mark an order paid based solely on frontend redirects or client-supplied status.
 - Protect webhook endpoints against replay where the provider contract supports timestamps/nonces.
 
+## Customer email OTP authentication
+- Generate cryptographically random six-digit codes; store only salted password-hard KDF hashes, never plaintext codes.
+- Enforce ten-minute expiry, single-use semantics, bounded attempts, and request/verification rate limits.
+- Use constant-time hash comparison, rotate session tokens, store only token hashes, and use HttpOnly, SameSite=Strict, Secure-in-production cookies plus CSRF validation for state-changing requests.
+- Derive customer email from the authenticated session, not the order request body. Enforce customer_id ownership in every customer order, payment-initialization, card, and balance endpoint.
+- Never allow an order UUID or email address alone to authorize access. Link historical orders only after successful verification of the matching email.
+
 ## Application security
 - Enforce staff role-based authorization on every admin endpoint.
 - Use secure password hashing, session rotation, CSRF protection where cookie sessions are used, rate limiting, and secure cookie flags.

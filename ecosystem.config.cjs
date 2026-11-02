@@ -1,0 +1,1 @@
+module.exports = { apps: [{ name: 'cards-api', script: 'dist/server.js', cwd: '/var/www/raaduns_com_usr/data/releases/cards.raaduns.com/btcpay-20261102-112500/apps/api', interpreter: 'node', instances: 1, exec_mode: 'fork', autorestart: true, max_restarts: 10, restart_delay: 3000, time: true }] };

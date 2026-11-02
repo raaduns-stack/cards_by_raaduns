@@ -44,3 +44,19 @@ Each route has its own raw-body/signature verification strategy, event validatio
 
 ## Deployment
 The configured web root is /var/www/raaduns_com_usr/data/www/cards.raaduns.com. The current directory contains only a hosting placeholder and is not a Git checkout. Deployment design must preserve the current placeholder until a tested release is ready. Secrets remain outside the repository.
+
+## Multi-currency pricing boundary (CTO-confirmed 2026-11-01)
+- `pricing_settings` stores the current NGN/USD exchange rate, USD issuance fee, NGN gross-profit target, and custom USD denomination rules.
+- The order pricing snapshot separates `card_amount_usd` from `payment_amount_ngn` and stores `payment_currency`, `issuance_fee_usd_snapshot`, `exchange_rate_snapshot`, and `gross_profit_ngn_snapshot`.
+- Order creation calculates the quote on the API from locked current settings. Monetary snapshots are immutable for the lifetime of the order.
+- Flutterwave receives and verifies `payment_amount_ngn` in NGN. Kripicard receives `card_amount_usd` in USD.
+- Frontend quote calculations are display-only; backend calculations and persisted snapshots are authoritative.
+
+## Admin frontend architecture (CTO-approved 2026-11-02)
+- The admin experience remains a React single-page application with a shared authenticated shell; separate URLs and page components are used for each admin area.
+- Admin routes: `/admin` (dashboard), `/admin/orders`, `/admin/pricing`, `/admin/providers`, and `/admin/audit`.
+- Each route is resolved independently and supports browser back/forward navigation and direct URL refresh through the existing web-server SPA fallback.
+- Page components live under `apps/web/src/pages/admin/`; the shared admin shell owns session state, navigation, and cross-page API state.
+- Provider settings use a provider selector and one focused configuration panel rather than rendering every provider form in a horizontal/stacked list.
+- Provider field state is derived from server-returned configured-field metadata. Draft edits are shown separately as unsaved changes. Secret values remain write-only; the browser never receives decrypted credentials.
+- Provider metadata must report configured optional fields such as Kripicard BIN and SMTP sender address so the UI does not mislabel persisted values as missing.

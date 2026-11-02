@@ -18,7 +18,10 @@ async function getTransporter() {
     transporter?.close();
     transporter = nodemailer.createTransport({
       host, port, secure: port === 465, requireTLS: port === 587,
-      auth: { user, pass }, tls: { rejectUnauthorized: true },
+      auth: { user, pass },
+      // Temporary CTO-approved workaround for the expired SMTP certificate.
+      // Keep verification enabled by default; remove SMTP_ALLOW_INVALID_CERT after renewal.
+      tls: { rejectUnauthorized: process.env.SMTP_ALLOW_INVALID_CERT !== "true" },
       connectionTimeout: 10000, greetingTimeout: 10000, socketTimeout: 20000,
     });
     transporterKey = key;

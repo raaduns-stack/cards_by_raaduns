@@ -23,8 +23,7 @@
 - Pending issuance polling endpoint: POST /api/internal/kripicard/poll. It requires the x-job-secret header matching INTERNAL_JOB_SECRET. Schedule it through the hosting cron facility after deployment.
 - The supplied Kripicard documentation does not define a webhook event contract. Do not invent one; pending issuance is reconciled through the documented Request Status endpoint.
 - The customer storefront calls /api/catalog, /api/orders, and /api/payments/flutterwave/initialize. The production reverse proxy must route /api and /webhooks to the Node API.
-- Customer checkout creates an order, sends a six-digit email OTP, verifies ownership, and only then allows Flutterwave initialization.
-- Customer order status and history require a 30-day HttpOnly, SameSite=Strict customer session established by OTP verification. Order UUIDs alone do not authorize order access.
+- The customer callback URL includes the order UUID as a bearer status reference. The status response does not include the customer's email address.
 - Admin console: /admin. API endpoints are under /api/admin/* and require an authenticated staff session. The web server must serve the SPA index.html for direct navigation to /admin as well as /.
 
 - Admin sessions use a 12-hour HttpOnly, SameSite=Strict cookie and CSRF token. Production cookies are Secure. Login is limited to five attempts per 15 minutes per source.
@@ -43,9 +42,9 @@
 1. Obtain CTO approval for the release target and production activation.
 2. Install dependencies from the lockfile.
 3. Run typecheck, tests, and production build.
-4. Apply reviewed database migrations with a least-privilege account using npm run migrate --workspace @cards/api (includes migration 005_customer_email_ownership.sql).
+4. Apply reviewed database migrations with a least-privilege account using npm run migrate --workspace @cards/api.
 5. Create the first administrator once: set ADMIN_EMAIL, ADMIN_DISPLAY_NAME, and a unique ADMIN_PASSWORD (12+ characters) in a protected environment, then run npm run bootstrap-admin --workspace @cards/api. Remove the bootstrap variables immediately afterward. Verify /admin login and remove or rotate the account if bootstrap was run in error.
-6. Configure production environment secrets securely, including a random SESSION_SECRET of at least 32 characters and SMTP_HOST, SMTP_PORT=587, SMTP_USER, SMTP_PASSWORD, and SMTP_FROM. Port 587 requires STARTTLS with certificate verification. Run `npm run smtp:verify --workspace @cards/api` from the release directory to verify the connection.
+6. Configure production environment secrets securely, including SMTP_HOST, SMTP_PORT=587, SMTP_USER, SMTP_PASSWORD, and SMTP_FROM. Port 587 requires STARTTLS with certificate verification. Run `npm run smtp:verify --workspace @cards/api` from the release directory to verify the connection.
 7. Configure HTTPS and the Flutterwave webhook URL: https://cards.raaduns.com/webhooks/flutterwave
 8. Configure the production reverse proxy and process supervisor in FastPanel.
 9. Configure a scheduled POST to /api/internal/kripicard/poll using the internal job secret.
@@ -53,4 +52,10 @@
 11. Deploy to a versioned release directory and retain rollback target.
 
 ## Not yet production-ready
-Customer email ownership and OTP-gated order access are implemented in the development branch but have not been deployed or migrated in production. Customer card management, protected balance lookup, card-delivery notifications, and the secure card-secret delivery design remain outstanding. Admin console is also not deployed or migrated in production. Do not enable public sales until these customer and operational flows are completed, configured, and reviewed.
+Customer email OTP authentication and order ownership are implemented on the current feature branch but require migrations 005–006, SMTP verification, functional security tests, and reviewed deployment before use. Balance lookup, card email notifications, and the secure card-secret delivery design remain unimplemented. Admin console is implemented but production provider configuration must be migrated and verified. Do not enable public sales until these customer and operational flows are completed and reviewed.
+
+## NGN pricing release migration
+- Migration 006 follows customer-auth migration 005. Apply reviewed migrations before deploying the matching API/web build: npm run migrate --workspace @cards/api.
+- New orders use the approved formula: ((USD card value + $7) × ₦1,430) + ₦10,000. The API stores immutable per-order snapshots for card value, fee, exchange rate, and gross profit.
+- Existing orders with a payment attempt or completed payment retain their original currency and amount. Only pending orders without a payment attempt are repriced to NGN.
+- Verify the USD 20 quote is NGN 48,610. Do not process a live payment or issue a live card as a deployment smoke test.

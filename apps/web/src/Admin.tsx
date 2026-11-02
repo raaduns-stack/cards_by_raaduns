@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
+import ProvidersPage, { type ProviderName, type ProviderStatus } from "./pages/admin/ProvidersPage.js";
+import DashboardPage from "./pages/admin/DashboardPage.js";
+import OrdersPage from "./pages/admin/OrdersPage.js";
+import PricingPage from "./pages/admin/PricingPage.js";
+import AuditPage from "./pages/admin/AuditPage.js";
+import OrderTable, { type AdminOrder } from "./pages/admin/OrderTable.js";
+
 
 type Identity = { id: number; email: string; displayName: string; role: "admin" | "operations" | "support" };
-type Order = {
-  id: string; order_number: string; customer_email: string; currency: string; amount: number;
-  order_status: string; payment_status: string; fulfilment_status: string; created_at: string;
-  issuance_status: string | null; last4: string | null;
-};
-type ProviderStatus = { provider: "flutterwave" | "kripicard" | "smtp"; configured: boolean; configuredFields: string[]; environment: string; verificationStatus: string; lastVerifiedAt: string | null };
+type Order = AdminOrder;
 type Pricing = {
-  settings: { currency: string; custom_enabled: number; custom_min: number | null; custom_max: number | null; custom_step: number | null } | null;
+  settings: { currency: string; exchange_rate_ngn_per_usd: number; issuance_fee_usd: number; gross_profit_ngn: number; custom_enabled: number; custom_min: number | null; custom_max: number | null; custom_step: number | null } | null;
   denominations: Array<{ amount: number; is_enabled: number }>;
 };
 
@@ -30,7 +32,17 @@ export default function AdminApp() {
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [tab, setTab] = useState("overview");
+  const [tab, setTab] = useState(() => resolveAdminRoute(window.location.pathname));
+  function navigateToTab(next: string) {
+    const target = next === "overview" ? "/admin" : "/admin/" + next;
+    if (window.location.pathname !== target) window.history.pushState({}, "", target);
+    setTab(next);
+  }
+  useEffect(() => {
+    const syncRoute = () => setTab(resolveAdminRoute(window.location.pathname));
+    window.addEventListener("popstate", syncRoute);
+    return () => window.removeEventListener("popstate", syncRoute);
+  }, []);
   const [overview, setOverview] = useState<{ metrics: Record<string, number>; recentOrders: Order[] } | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);
   const [search, setSearch] = useState("");
@@ -38,6 +50,9 @@ export default function AdminApp() {
   const [selectedOrder, setSelectedOrder] = useState("");
   const [reviewNote, setReviewNote] = useState("");
   const [pricing, setPricing] = useState<Pricing | null>(null);
+  const [exchangeRate, setExchangeRate] = useState("1430");
+  const [issuanceFee, setIssuanceFee] = useState("7");
+  const [grossProfit, setGrossProfit] = useState("10000");
   const [customEnabled, setCustomEnabled] = useState(false);
   const [customMin, setCustomMin] = useState("20");
   const [customMax, setCustomMax] = useState("200");
@@ -45,7 +60,8 @@ export default function AdminApp() {
   const [denominations, setDenominations] = useState<Array<{ amount: number; enabled: boolean }>>([]);
   const [auditEvents, setAuditEvents] = useState<Array<Record<string, unknown>>>([]);
   const [providerStatuses, setProviderStatuses] = useState<ProviderStatus[]>([]);
-  const [providerForms, setProviderForms] = useState<Record<string, string>>({ environment: "test", kripicardBin: "539502", smtpPort: "587" });
+  const [providerNotice, setProviderNotice] = useState("");
+  const [providerForms, setProviderForms] = useState<Record<string, string>>({ environment: "test", kripicardBin: "539502", smtpPort: "587", btcpayServerUrl: "https://btcpay.scrapee.uk", btcpayEnabled: "false", btcpayBtcEnabled: "true", btcpayLtcEnabled: "true" });
 
   const loadSession = useCallback(async () => {
     try {
@@ -69,6 +85,9 @@ export default function AdminApp() {
   const loadPricing = useCallback(async () => {
     const data = await request<Pricing>("/api/admin/pricing", csrf);
     setPricing(data);
+    setExchangeRate(String(data.settings?.exchange_rate_ngn_per_usd ?? 1430));
+    setIssuanceFee(String(data.settings?.issuance_fee_usd ?? 7));
+    setGrossProfit(String(data.settings?.gross_profit_ngn ?? 10000));
     setCustomEnabled(Boolean(data.settings?.custom_enabled));
     setCustomMin(String(data.settings?.custom_min ?? 20));
     setCustomMax(String(data.settings?.custom_max ?? 200));
@@ -78,6 +97,8 @@ export default function AdminApp() {
   const loadProviders = useCallback(async () => {
     const data = await request<{ providers: ProviderStatus[] }>("/api/admin/providers", csrf);
     setProviderStatuses(data.providers);
+    const btcpay = data.providers.find((item) => item.provider === "btcpay")?.settings;
+    if (btcpay) setProviderForms((current) => ({ ...current, btcpayServerUrl: btcpay.serverUrl ?? "https://btcpay.scrapee.uk", btcpayStoreId: btcpay.storeId ?? "", btcpayEnabled: btcpay.enabled ?? "false" }));
   }, [csrf]);
   const loadAudit = useCallback(async () => {
     const data = await request<{ events: Array<Record<string, unknown>> }>("/api/admin/audit", csrf);
@@ -97,7 +118,7 @@ export default function AdminApp() {
       const result = await request<{ user: Identity; csrfToken: string }>("/api/admin/auth/login", "", {
         method: "POST", body: JSON.stringify({ email, password }),
       });
-      setUser(result.user); setCsrf(result.csrfToken); setPassword(""); setTab("overview");
+      setUser(result.user); setCsrf(result.csrfToken); setPassword(""); navigateToTab("overview");
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Sign-in failed."); }
     finally { setBusy(false); }
   }
@@ -126,6 +147,7 @@ export default function AdminApp() {
     try {
       await request("/api/admin/pricing", csrf, {
         method: "PUT", body: JSON.stringify({
+          exchangeRateNgnPerUsd: Number(exchangeRate), issuanceFeeUsd: Number(issuanceFee), grossProfitNgn: Number(grossProfit),
           customEnabled, customMin: customEnabled ? Number(customMin) : null,
           customMax: customEnabled ? Number(customMax) : null, customStep: customEnabled ? Number(customStep) : null,
           denominations,
@@ -136,32 +158,31 @@ export default function AdminApp() {
     finally { setBusy(false); }
   }
 
-  async function saveProvider(provider: "flutterwave" | "kripicard" | "smtp") {
-    setBusy(true); setError("");
+  async function saveProvider(provider: ProviderName): Promise<boolean> {
+    setBusy(true); setError(""); setProviderNotice("");
     const values = provider === "flutterwave"
-      ? { secretKey: providerForms.fwSecretKey, webhookSecret: providerForms.fwWebhookSecret, environment: providerForms.environment }
+      ? { publicKey: providerForms.fwPublicKey, secretKey: providerForms.fwSecretKey, webhookSecret: providerForms.fwWebhookSecret, environment: providerForms.environment }
       : provider === "kripicard"
         ? { apiKey: providerForms.kripicardApiKey, bin: providerForms.kripicardBin }
-        : { host: providerForms.smtpHost, port: providerForms.smtpPort, user: providerForms.smtpUser, password: providerForms.smtpPassword, from: providerForms.smtpFrom };
+        : provider === "btcpay" ? { serverUrl: providerForms.btcpayServerUrl || "https://btcpay.scrapee.uk", storeId: providerForms.btcpayStoreId, apiKey: providerForms.btcpayApiKey, webhookSecret: providerForms.btcpayWebhookSecret, enabled: providerForms.btcpayEnabled ?? "false" } : { host: providerForms.smtpHost, port: providerForms.smtpPort, user: providerForms.smtpUser, password: providerForms.smtpPassword, from: providerForms.smtpFrom };
     try {
       await request("/api/admin/providers/" + provider, csrf, { method: "PUT", body: JSON.stringify(values) });
-      setProviderForms((current) => Object.fromEntries(Object.entries(current).filter(([key]) => !key.toLowerCase().includes(provider === "flutterwave" ? "fwsecret" : provider === "kripicard" ? "kripicardapikey" : "smtppassword"))));
+      setProviderForms((current) => Object.fromEntries(Object.entries(current).filter(([key]) => !(provider === "flutterwave" ? ["fwpublickey", "fwsecret", "fwwebhooksecret"].some((part) => key.toLowerCase().includes(part)) : provider === "kripicard" ? key.toLowerCase().includes("kripicardapikey") : provider === "btcpay" ? ["btcpayapikey", "btcpaywebhooksecret"].some((part) => key.toLowerCase().includes(part)) : key.toLowerCase().includes("smtppassword")))));
       await loadProviders();
-    } catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to save provider settings."); }
+      setProviderNotice(`${provider === "flutterwave" ? "Flutterwave" : provider === "kripicard" ? "Kripicard" : provider === "btcpay" ? "BTCPay" : "SMTP"} settings saved successfully.`);
+      return true;
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to save provider settings."); return false; }
     finally { setBusy(false); }
   }
-  async function verifyProvider(provider: "flutterwave" | "kripicard" | "smtp") {
-    setBusy(true); setError("");
+  async function verifyProvider(provider: ProviderName) {
+    setBusy(true); setError(""); setProviderNotice("");
     try {
       await request("/api/admin/providers/" + provider + "/verify", csrf, { method: "POST", body: "{}" });
       await loadProviders();
+      setProviderNotice(`${provider === "flutterwave" ? "Flutterwave" : provider === "kripicard" ? "Kripicard" : provider === "btcpay" ? "BTCPay" : "SMTP"} connection verified successfully.`);
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Provider verification failed."); await loadProviders().catch(() => undefined); }
     finally { setBusy(false); }
   }
-  function providerField(key: string, label: string, type = "text", placeholder = "Leave blank to keep current value") {
-    return <label className="provider-field">{label}<input type={type} autoComplete="off" value={providerForms[key] ?? ""} placeholder={placeholder} onChange={(event) => setProviderForms((current) => ({ ...current, [key]: event.target.value }))} /></label>;
-  }
-
   if (checking) return <main className="admin-shell"><p>Checking administrator session…</p></main>;
   if (!user) return (
     <main className="admin-shell admin-login">
@@ -190,78 +211,24 @@ export default function AdminApp() {
         <aside className="admin-sidebar">
           <p className="admin-eyebrow">WORKSPACE</p>
           {["overview","orders","pricing",...(user.role === "admin" ? ["providers","audit"] : [])].map((item) =>
-            <button key={item} className={tab === item ? "active" : ""} onClick={() => setTab(item)}>{item[0]?.toUpperCase()}{item.slice(1)}</button>)}
+            <button key={item} className={tab === item ? "active" : ""} onClick={() => navigateToTab(item)}>{item[0]?.toUpperCase()}{item.slice(1)}</button>)}
         </aside>
         <section className="admin-content">
           <div className="admin-heading"><div><p className="admin-eyebrow">OPERATIONS CONSOLE</p><h1>{tab === "overview" ? "Dashboard" : tab[0]?.toUpperCase() + tab.slice(1)}</h1></div><span className="admin-role">{user.role}</span></div>
           {error && <p className="admin-error" role="alert">{error}</p>}
-          {tab === "overview" && overview && <>
-            <div className="admin-metrics">
-              {[
-                ["Total orders", overview.metrics.total_orders], ["Awaiting payment", overview.metrics.awaiting_payment],
-                ["Payment verified", overview.metrics.paid], ["Manual review", overview.metrics.manual_review],
-                ["Fulfilled", overview.metrics.fulfilled],
-              ].map(([label, value]) => <article className="admin-metric" key={String(label)}><span>{label}</span><strong>{Number(value ?? 0).toLocaleString()}</strong></article>)}
-            </div>
-            <h2>Recent orders</h2><OrderTable orders={overview.recentOrders} />
-          </>}
-          {tab === "orders" && <>
-            <div className="admin-filters">
-              <input aria-label="Search orders" placeholder="Search order, email or ID" value={search} onChange={(event) => setSearch(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void loadOrders(); }} />
-              <select aria-label="Filter by status" value={status} onChange={(event) => setStatus(event.target.value)}>
-                {["all","pending_payment","paid","fulfilment_pending","fulfilled","cancelled","failed","manual_review"].map((value) => <option key={value} value={value}>{value.replaceAll("_", " ")}</option>)}
-              </select>
-              <button onClick={() => void loadOrders()}>Apply filters</button>
-            </div>
-            <OrderTable orders={orders} action={(order) => setSelectedOrder(order.id)} canReview={user.role !== "support"} />
-            {selectedOrder && <form className="admin-panel review-form" onSubmit={markManualReview}>
-              <h3>Move order to manual review</h3><p className="admin-muted">Only payment-verified orders can be moved. This does not retry card issuance.</p>
-              <textarea required minLength={5} maxLength={1000} value={reviewNote} onChange={(event) => setReviewNote(event.target.value)} placeholder="Record the operational reason…" />
-              <div><button className="admin-primary" disabled={busy}>Confirm review</button><button type="button" onClick={() => setSelectedOrder("")}>Cancel</button></div>
-            </form>}
-          </>}
-          {tab === "pricing" && pricing && <>
-            {user.role === "admin" ? <form className="admin-panel pricing-form" onSubmit={savePricing}>
-              <p className="admin-muted">Currency: USD. The approved fixed denominations cannot be changed, only enabled or disabled.</p>
-              <h2>Fixed denominations</h2>
-              <div className="admin-denominations">{denominations.map((item, index) => <label key={item.amount}><input type="checkbox" checked={item.enabled} onChange={(event) => setDenominations((current) => current.map((d, i) => i === index ? { ...d, enabled: event.target.checked } : d))} /> <strong>${item.amount}</strong></label>)}</div>
-              <h2>Custom amount</h2>
-              <label className="admin-toggle"><input type="checkbox" checked={customEnabled} onChange={(event) => setCustomEnabled(event.target.checked)} /> Enable custom amounts</label>
-              {customEnabled && <div className="admin-pricing-grid">
-                <label>Minimum (USD)<input type="number" min="0.01" step="0.01" value={customMin} onChange={(event) => setCustomMin(event.target.value)} /></label>
-                <label>Maximum (USD)<input type="number" min="0.01" step="0.01" value={customMax} onChange={(event) => setCustomMax(event.target.value)} /></label>
-                <label>Increment (USD)<input type="number" min="0.01" step="0.01" value={customStep} onChange={(event) => setCustomStep(event.target.value)} /></label>
-              </div>}
-              <button className="admin-primary" disabled={busy}>{busy ? "Saving…" : "Save pricing configuration"}</button>
-            </form> : <p className="admin-muted">Pricing configuration is read-only for your role. Contact an administrator to make changes.</p>}
-          </>}
-          {tab === "providers" && user.role === "admin" && <div className="provider-settings">
-            <p className="admin-muted">Credentials are encrypted at rest. Existing secrets are never returned to this page; leave secret fields blank to retain the current value. Configure APP_ENCRYPTION_KEY on the server before saving.</p>
-            {(["flutterwave", "kripicard", "smtp"] as const).map((provider) => {
-              const status = providerStatuses.find((item) => item.provider === provider);
-              return <section className="admin-panel provider-panel" key={provider}>
-                <div className="provider-heading"><div><h2>{provider === "flutterwave" ? "Flutterwave · Payments" : provider === "kripicard" ? "Kripicard · Card issuance" : "SMTP · Email delivery"} </h2><p className="admin-muted">{status?.configured ? "Configured" : "Not configured"} · Verification: {status?.verificationStatus ?? "not tested"}</p></div><span className="admin-role">{status?.environment ?? "production"}</span></div>
-                {provider === "flutterwave" && <><label className="provider-field">Environment<select value={providerForms.environment ?? "test"} onChange={(event) => setProviderForms((current) => ({ ...current, environment: event.target.value }))}><option value="test">Test</option><option value="live">Live</option></select></label>{providerField("fwSecretKey", "Secret key", "password")}{providerField("fwWebhookSecret", "Webhook secret hash", "password")}</>}
-                {provider === "kripicard" && <>{providerField("kripicardApiKey", "API key", "password")}{providerField("kripicardBin", "BIN", "text", "539502")}</>}
-                {provider === "smtp" && <>{providerField("smtpHost", "SMTP host")}{providerField("smtpPort", "SMTP port", "number", "587")}{providerField("smtpUser", "SMTP username")}{providerField("smtpPassword", "SMTP password", "password")}{providerField("smtpFrom", "From address")}</>}
-                <div className="provider-actions"><button className="admin-primary" disabled={busy} onClick={() => void saveProvider(provider)}>Save credentials</button><button disabled={busy || !status?.configured} onClick={() => void verifyProvider(provider)}>Verify connection</button></div>
-                {provider === "kripicard" && <p className="admin-muted">Kripicard verification is disabled until a documented non-issuing verification endpoint is available. No test card will be created.</p>}
-                {status?.lastVerifiedAt && <p className="admin-muted">Last verified: {new Date(status.lastVerifiedAt).toLocaleString()}</p>}
-              </section>;
-            })}
-          </div>}
-          {tab === "audit" && <div className="admin-panel admin-audit">
-            {auditEvents.map((event, index) => <article key={String(event.id ?? index)}><strong>{String(event.action)}</strong><span>{String(event.email ?? "System")} · {String(event.entity_type)} {String(event.entity_id ?? "")}</span><time>{new Date(String(event.created_at)).toLocaleString()}</time><pre>{JSON.stringify(event.details, null, 2)}</pre></article>)}
-            {!auditEvents.length && <p className="admin-muted">No audit events recorded yet.</p>}
-          </div>}
+          {tab === "overview" && <DashboardPage overview={overview} />}
+          {tab === "orders" && <OrdersPage orders={orders} search={search} onSearch={setSearch} status={status} onStatus={setStatus} onApply={() => void loadOrders()} onReview={(order) => setSelectedOrder(order.id)} canReview={user.role !== "support"} selectedOrder={selectedOrder} reviewNote={reviewNote} onReviewNote={setReviewNote} onSubmitReview={markManualReview} onCancelReview={() => setSelectedOrder("")} busy={busy} />}
+          {tab === "pricing" && <PricingPage pricing={pricing} isAdmin={user.role === "admin"} busy={busy} exchangeRate={exchangeRate} setExchangeRate={setExchangeRate} issuanceFee={issuanceFee} setIssuanceFee={setIssuanceFee} grossProfit={grossProfit} setGrossProfit={setGrossProfit} customEnabled={customEnabled} setCustomEnabled={setCustomEnabled} customMin={customMin} setCustomMin={setCustomMin} customMax={customMax} setCustomMax={setCustomMax} customStep={customStep} setCustomStep={setCustomStep} denominations={denominations} setDenominations={setDenominations} onSubmit={savePricing} />}
+          {tab === "providers" && user.role === "admin" && <ProvidersPage statuses={providerStatuses} forms={providerForms} busy={busy} notice={providerNotice} onChange={(key, value) => setProviderForms((current) => ({ ...current, [key]: value }))} onSave={(provider: ProviderName) => saveProvider(provider)} onVerify={(provider: ProviderName) => void verifyProvider(provider)} />}
+          {tab === "audit" && <AuditPage events={auditEvents} />}
         </section>
       </div>
     </main>
   );
 }
 
-function OrderTable({ orders, action, canReview = false }: { orders: Order[]; action?: (order: Order) => void; canReview?: boolean }) {
-  return <div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>Order</th><th>Customer</th><th>Amount</th><th>Payment</th><th>Fulfilment</th><th>Created</th>{canReview && <th>Action</th>}</tr></thead>
-    <tbody>{orders.map((order) => <tr key={order.id}><td><strong>{order.order_number}</strong><small>{order.order_status.replaceAll("_", " ")}</small></td><td>{order.customer_email}</td><td>{order.currency} {Number(order.amount).toFixed(2)}</td><td>{order.payment_status.replaceAll("_", " ")}</td><td>{order.fulfilment_status.replaceAll("_", " ")}{order.last4 ? <small>•••• {order.last4}</small> : null}</td><td>{new Date(order.created_at).toLocaleDateString()}</td>{canReview && <td>{order.payment_status === "successful" && order.fulfilment_status !== "completed" && action ? <button onClick={() => action(order)}>Review</button> : "—"}</td>}</tr>)}
-    {!orders.length && <tr><td colSpan={canReview ? 7 : 6}>No orders found.</td></tr>}</tbody></table></div>;
+function resolveAdminRoute(pathname: string): string {
+  const normalized = pathname.endsWith("/") ? pathname.slice(0, -1) : pathname;
+  const segment = normalized.split("/").pop() ?? "";
+  return ["orders", "pricing", "providers", "audit"].includes(segment) ? segment : "overview";
 }

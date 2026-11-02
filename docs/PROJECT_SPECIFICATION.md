@@ -5,16 +5,21 @@ Build a web application for purchasing and receiving virtual payment cards, with
 
 ## Customer journey
 1. Customer selects a card product/network that is actually available.
-2. Customer selects one of the configured fixed denominations (USD 20, 30, 50, 100, 150, 200) or enters a custom amount within administrator-configured limits.
+2. Customer selects one of the configured fixed denominations (USD 20, 30, 50, 100, 150, 200) or enters a custom amount from USD 20 to USD 500 in USD 1 increments (CTO-approved).
 3. Customer provides an email address and submits the order.
-4. Backend creates a pending order and sends a six-digit email OTP.
-5. Customer verifies email ownership; the backend creates a protected customer session.
-6. Backend permits payment initialization only for orders owned by the verified email session.
-7. Customer completes payment using the instructions presented by the application.
-8. Backend confirms payment with Flutterwave using verified server-side evidence.
-9. Customer receives a payment confirmation email.
-10. Fulfilment runs through Kripicard API by default. Staff manually handles exceptions through the admin area.
-11. Once card details are available and validated, the application securely stores/associates the provider card record and emails delivery instructions/details to the customer.
+4. Backend creates a pending order and requests payment instructions from Flutterwave.
+5. Customer completes payment using the instructions presented by the application.
+6. Backend confirms payment with Flutterwave using verified server-side evidence.
+7. Customer receives a payment confirmation email.
+8. Fulfilment runs through Kripicard API by default. Staff manually handles exceptions through the admin area.
+9. Once card details are available and validated, the application securely stores/associates the provider card record and emails delivery instructions/details to the customer.
+
+## Customer authentication (CTO-approved 2026-11-01)
+- Customers authenticate with a six-digit, email-delivered one-time code; no password account is required.
+- Codes expire after 10 minutes, are single-use, and are limited to five verification attempts. Requests are rate-limited per source and per email.
+- Successful verification creates/uses a customer identity keyed by normalized email and establishes a seven-day server-side session with an HttpOnly cookie and CSRF token.
+- Existing unclaimed orders with the same email are associated only after the customer proves control of that email. New orders require an authenticated customer session and are linked to that customer ID.
+- Customer order/status APIs must filter by authenticated customer ID. A UUID alone is never authorization.
 
 ## Customer areas
 - Buy Card: network/product selection, fixed denominations, custom amount, email, order creation.
@@ -22,8 +27,6 @@ Build a web application for purchasing and receiving virtual payment cards, with
 - My Card: list cards associated with the customer's verified order/email and delivery status.
 - Check Balance: customer enters card number; backend securely maps it to an internal card record and queries the provider. Do not send provider API credentials to the client.
 - Order status and email notifications.
-- Email ownership verification by six-digit OTP before payment; code expires after 10 minutes and is limited to five attempts.
-- Customer order/card endpoints require an authenticated email-verified customer session.
 
 ## Admin areas
 - Dashboard and operational metrics.
@@ -61,10 +64,20 @@ Build a web application for purchasing and receiving virtual payment cards, with
 
 ## Open decisions / blockers
 - Visa supplier and verified issuance route.
-- Admin-defined custom amount bounds and increment rules.
+- Custom amount is CTO-approved at USD 20 minimum, USD 500 maximum, and USD 1 increments; server-side validation is mandatory.
 - Flutterwave product/method and exact provider configuration.
 - Kripicard production API key rotation and environment installation.
 - Secure customer authentication/ownership verification for My Card and balance checking.
 - Safe card-secret delivery and storage design.
 - Hosting database password rotation and server-side configuration.
 - Exact KYC/issuer eligibility language; "No KYC required" is not approved for publication.
+## Approved pricing and checkout currency (CTO-confirmed 2026-11-01)
+- Customer-facing card denominations and custom amounts are USD face values.
+- Customer checkout and Flutterwave charge currency is NGN.
+- Default pricing inputs: USD 7.00 issuance fee per card, NGN 1,430.00/USD exchange rate, and NGN 10,000.00 gross profit per card.
+- Formula: `NGN charge = ((USD card face value + USD issuance fee) × NGN/USD exchange rate) + NGN gross profit`.
+- USD 20 example: NGN 48,610.00.
+- Pricing inputs are editable only by an administrator in Admin → Pricing. The page must show example NGN prices for configured fixed denominations and explain that gross profit is before payment fees, tax, refunds, and other operating costs.
+- The customer must see the NGN charge before starting Flutterwave checkout. Custom amount price previews may be calculated in the browser, but the server-calculated order quote is authoritative.
+- Persist a per-order snapshot of card face value, fee, exchange rate, profit, NGN amount and currency. Do not reprice an existing order after settings change.
+- Flutterwave initialization and server-side verification use the stored NGN amount/currency. Kripicard card creation uses only the stored USD face value, never the NGN charge.

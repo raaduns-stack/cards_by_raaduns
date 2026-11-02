@@ -17,14 +17,17 @@ const SESSION_HOURS = 12;
 const loginSchema = z.object({ email: z.string().trim().email().max(254), password: z.string().min(1).max(256) });
 const manualReviewSchema = z.object({ note: z.string().trim().min(5).max(1000) });
 const pricingSchema = z.object({
+  exchangeRateNgnPerUsd: z.number().positive().max(1000000),
+  issuanceFeeUsd: z.number().min(0).max(100000),
+  grossProfitNgn: z.number().min(0).max(100000000),
   customEnabled: z.boolean(),
   customMin: z.number().positive().max(100000).nullable(),
   customMax: z.number().positive().max(100000).nullable(),
   customStep: z.number().positive().max(100000).nullable(),
   denominations: z.array(z.object({ amount: z.number().refine((n) => [20, 30, 50, 100, 150, 200].includes(n)), enabled: z.boolean() })).length(6),
 }).superRefine((value, ctx) => {
-  if (value.customEnabled && (value.customMin === null || value.customMax === null || value.customStep === null || value.customMax < value.customMin)) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Valid custom amount bounds and step are required." });
+  if (value.customEnabled && (value.customMin !== 20 || value.customMax !== 500 || value.customStep !== 1)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Approved custom amount settings are USD 20 minimum, USD 500 maximum, in USD 1 increments." });
   }
   if (new Set(value.denominations.map((d) => d.amount)).size !== 6) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Each approved denomination must appear exactly once." });
   if (!value.denominations.some((d) => d.enabled)) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "At least one fixed denomination must remain enabled." });
@@ -213,8 +216,8 @@ export async function registerAdminRoutes(app: FastifyInstance) {
   app.get("/api/admin/pricing", async (request, reply) => {
     const identity = await authenticate(request, reply);
     if (!identity) return reply;
-    const [settings] = await db.query<Array<RowDataPacket & { currency: string; custom_enabled: number; custom_min: number | null; custom_max: number | null; custom_step: number | null }>>(
-      "SELECT currency, custom_enabled, custom_min, custom_max, custom_step FROM pricing_settings WHERE id = 1",
+    const [settings] = await db.query<Array<RowDataPacket & { currency: string; exchange_rate_ngn_per_usd: number; issuance_fee_usd: number; gross_profit_ngn: number; custom_enabled: number; custom_min: number | null; custom_max: number | null; custom_step: number | null }>>(
+      "SELECT currency, exchange_rate_ngn_per_usd, issuance_fee_usd, gross_profit_ngn, custom_enabled, custom_min, custom_max, custom_step FROM pricing_settings WHERE id = 1",
     );
     const [denominations] = await db.query<Array<RowDataPacket & { amount: number; is_enabled: number }>>(
       "SELECT amount, is_enabled FROM fixed_denominations ORDER BY sort_order",
@@ -233,15 +236,15 @@ export async function registerAdminRoutes(app: FastifyInstance) {
     try {
       await connection.beginTransaction();
       const [beforeSettings] = await connection.query<Array<RowDataPacket & Record<string, unknown>>>(
-        "SELECT currency, custom_enabled, custom_min, custom_max, custom_step FROM pricing_settings WHERE id = 1 FOR UPDATE",
+        "SELECT currency, exchange_rate_ngn_per_usd, issuance_fee_usd, gross_profit_ngn, custom_enabled, custom_min, custom_max, custom_step FROM pricing_settings WHERE id = 1 FOR UPDATE",
       );
       const [beforeDenominations] = await connection.query<Array<RowDataPacket & Record<string, unknown>>>(
         "SELECT amount, is_enabled FROM fixed_denominations ORDER BY sort_order FOR UPDATE",
       );
       if (!beforeSettings[0]) { await connection.rollback(); return reply.code(503).send({ error: "Pricing is not configured." }); }
       await connection.execute(
-        "UPDATE pricing_settings SET custom_enabled = ?, custom_min = ?, custom_max = ?, custom_step = ? WHERE id = 1",
-        [value.customEnabled, value.customEnabled ? value.customMin : null, value.customEnabled ? value.customMax : null, value.customEnabled ? value.customStep : null],
+        "UPDATE pricing_settings SET currency = 'NGN', exchange_rate_ngn_per_usd = ?, issuance_fee_usd = ?, gross_profit_ngn = ?, custom_enabled = ?, custom_min = ?, custom_max = ?, custom_step = ? WHERE id = 1",
+        [value.exchangeRateNgnPerUsd, value.issuanceFeeUsd, value.grossProfitNgn, value.customEnabled, value.customEnabled ? value.customMin : null, value.customEnabled ? value.customMax : null, value.customEnabled ? value.customStep : null],
       );
       for (const item of value.denominations) {
         await connection.execute("UPDATE fixed_denominations SET is_enabled = ? WHERE amount = ?", [item.enabled, item.amount]);
@@ -263,14 +266,15 @@ export async function registerAdminRoutes(app: FastifyInstance) {
     const identity = await authenticate(request, reply);
     if (!identity) return reply;
     if (!allowed(identity, ["admin"], reply)) return reply;
-    const providers: ProviderName[] = ["flutterwave", "kripicard", "smtp"];
+    const providers: ProviderName[] = ["flutterwave", "kripicard", "smtp", "btcpay"];
     const [stored] = await db.query<Array<RowDataPacket & { provider: ProviderName; encrypted_config: string; environment: string; verification_status: string; last_verified_at: Date | null }>>("SELECT provider, encrypted_config, environment, verification_status, last_verified_at FROM provider_settings");
     const result = [];
     for (const provider of providers) {
       const row = stored.find((item) => item.provider === provider);
       const config = row ? decryptConfig(row.encrypted_config) : await getProviderConfig(provider);
-      const required = provider === "flutterwave" ? ["secretKey", "webhookSecret"] : provider === "kripicard" ? ["apiKey"] : ["host", "port", "user", "password"];
-      result.push({ provider, configured: required.every((key) => Boolean(config[key]?.trim())), configuredFields: required.filter((key) => Boolean(config[key]?.trim())), environment: row?.environment ?? config.environment ?? "production", verificationStatus: row?.verification_status ?? "not_tested", lastVerifiedAt: row?.last_verified_at ?? null });
+      const required = provider === "flutterwave" ? ["secretKey", "webhookSecret"] : provider === "kripicard" ? ["apiKey"] : provider === "btcpay" ? ["serverUrl", "storeId", "apiKey", "webhookSecret"] : ["host", "port", "user", "password"];
+      const trackedFields = provider === "flutterwave" ? ["publicKey", "secretKey", "webhookSecret"] : provider === "kripicard" ? ["apiKey", "bin"] : provider === "smtp" ? ["host", "port", "user", "password", "from"] : required;
+      result.push({ provider, configured: required.every((key) => Boolean(config[key]?.trim())), configuredFields: trackedFields.filter((key) => Boolean(config[key]?.trim())), environment: row?.environment ?? config.environment ?? "production", verificationStatus: row?.verification_status ?? "not_tested", lastVerifiedAt: row?.last_verified_at ?? null, ...(provider === "btcpay" ? { settings: { serverUrl: config.serverUrl, storeId: config.storeId, enabled: config.enabled } } : {}) });
     }
     return { providers: result };
   });
@@ -279,24 +283,25 @@ export async function registerAdminRoutes(app: FastifyInstance) {
     const identity = await authenticate(request, reply, true);
     if (!identity) return reply;
     if (!allowed(identity, ["admin"], reply)) return reply;
-    const params = z.object({ provider: z.enum(["flutterwave", "kripicard", "smtp"]) }).safeParse(request.params);
+    const params = z.object({ provider: z.enum(["flutterwave", "kripicard", "smtp", "btcpay"]) }).safeParse(request.params);
     if (!params.success) return reply.code(404).send({ error: "Unknown provider." });
     const provider = params.data.provider;
     const schemas = {
-      flutterwave: z.object({ secretKey: z.string().max(500).optional(), webhookSecret: z.string().max(500).optional(), environment: z.enum(["test", "live"]) }),
+      flutterwave: z.object({ publicKey: z.string().max(500).optional(), secretKey: z.string().max(500).optional(), webhookSecret: z.string().max(500).optional(), environment: z.enum(["test", "live"]) }),
       kripicard: z.object({ apiKey: z.string().max(500).optional(), bin: z.string().regex(/^\d{6}$/).optional() }),
       smtp: z.object({ host: z.string().trim().max(255).optional(), port: z.coerce.number().int().min(1).max(65535).optional(), user: z.string().trim().max(254).optional(), password: z.string().max(500).optional(), from: z.string().trim().max(254).optional() }),
+      btcpay: z.object({ serverUrl: z.string().url().max(255), storeId: z.string().trim().min(1).max(160), apiKey: z.string().max(500).optional(), webhookSecret: z.string().max(500).optional(), enabled: z.enum(["true", "false"]) }),
     };
     const parsed = schemas[provider].safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: "Invalid provider configuration." });
     try {
       const current = await getProviderConfig(provider);
       const next = { ...current, ...Object.fromEntries(Object.entries(parsed.data).filter(([, value]) => value !== undefined && value !== "")) } as Record<string, string>;
-      const required = provider === "flutterwave" ? ["secretKey", "webhookSecret"] : provider === "kripicard" ? ["apiKey"] : ["host", "port", "user", "password"];
-      if (!required.every((key) => Boolean(next[key]?.trim()))) return reply.code(400).send({ error: "All required provider fields must be configured before saving." });
+      const required = provider === "flutterwave" ? ["secretKey", "webhookSecret"] : provider === "kripicard" ? ["apiKey"] : provider === "btcpay" ? ["serverUrl", "storeId", "apiKey", "webhookSecret"] : ["host", "port", "user", "password"];
+      if (provider === "flutterwave" ? !Boolean(next.secretKey?.trim()) : !required.every((key) => Boolean(next[key]?.trim()))) return reply.code(400).send({ error: provider === "flutterwave" ? "A Flutterwave Secret Key is required before saving." : "All required provider fields must be configured before saving." });
       const environment = provider === "flutterwave" ? (next.environment ?? "test") : "production";
       await db.execute("INSERT INTO provider_settings (provider, encrypted_config, environment, verification_status, configured_by) VALUES (?, ?, ?, 'not_tested', ?) ON DUPLICATE KEY UPDATE encrypted_config = VALUES(encrypted_config), environment = VALUES(environment), verification_status = 'not_tested', last_verified_at = NULL, configured_by = VALUES(configured_by)", [provider, encryptConfig(next), environment, identity.id]);
-      await audit(identity, request, "provider.credentials_updated", "provider", provider, { configuredFields: required.filter((key) => Boolean(next[key])), environment });
+      await audit(identity, request, "provider.credentials_updated", "provider", provider, { configuredFields: (provider === "flutterwave" ? ["publicKey", "secretKey", "webhookSecret"] : required).filter((key) => Boolean(next[key])), environment });
       return { success: true, message: "Provider credentials saved securely. Secret values are not returned." };
     } catch (error) {
       request.log.error({ provider, error: error instanceof Error ? error.message : "unknown" }, "Provider settings save failed");
@@ -308,17 +313,30 @@ export async function registerAdminRoutes(app: FastifyInstance) {
     const identity = await authenticate(request, reply, true);
     if (!identity) return reply;
     if (!allowed(identity, ["admin"], reply)) return reply;
-    const params = z.object({ provider: z.enum(["flutterwave", "kripicard", "smtp"]) }).safeParse(request.params);
+    const params = z.object({ provider: z.enum(["flutterwave", "kripicard", "smtp", "btcpay"]) }).safeParse(request.params);
     if (!params.success) return reply.code(404).send({ error: "Unknown provider." });
     const provider = params.data.provider;
     try {
       const config = await getProviderConfig(provider);
       if (provider === "kripicard") return reply.code(501).send({ error: "Kripicard has no documented non-issuing credential verification endpoint. Credentials are stored but cannot be safely connection-tested." });
+      if (provider === "btcpay") {
+        if (!config.serverUrl || !config.storeId || !config.apiKey || !config.webhookSecret) return reply.code(400).send({ error: "Save the BTCPay server URL, Store ID, API key and webhook secret first." });
+        const root = config.serverUrl.replace(/\/$/, "");
+        if (!/^https:\/\//i.test(root)) throw new Error("BTCPay server URL must use HTTPS.");
+        const response = await fetch(`${root}/api/v1/stores/${encodeURIComponent(config.storeId)}`, { headers: { Authorization: `token ${config.apiKey}` }, signal: AbortSignal.timeout(15000) });
+        if (!response.ok) throw new Error(`BTCPay returned HTTP ${response.status}`);
+        const store = await response.json() as { id?: string };
+        if (store.id !== config.storeId) throw new Error("BTCPay returned a different store ID.");
+        const methodsResponse = await fetch(`${root}/api/v1/stores/${encodeURIComponent(config.storeId)}/payment-methods?onlyEnabled=true`, { headers: { Authorization: `token ${config.apiKey}` }, signal: AbortSignal.timeout(15000) });
+        if (!methodsResponse.ok) throw new Error(`BTCPay payment-method check returned HTTP ${methodsResponse.status}`);
+        const methods = await methodsResponse.json() as Array<{ paymentMethodId?: string; enabled?: boolean }>;
+        if (!methods.some((method) => method.enabled !== false && /^(BTC|LTC)-/.test(method.paymentMethodId ?? ""))) throw new Error("Enable at least one BTC or LTC payment method in the BTCPay store.");
+      }
       if (provider === "smtp") {
         const port = Number(config.port ?? 587);
         const transport = nodemailer.createTransport({ host: config.host, port, secure: port === 465, requireTLS: port === 587, auth: { user: config.user, pass: config.password }, tls: { rejectUnauthorized: true }, connectionTimeout: 10000, greetingTimeout: 10000, socketTimeout: 15000 });
         try { await transport.verify(); } finally { transport.close(); }
-      } else {
+      } else if (provider === "flutterwave") {
         if (!config.secretKey) return reply.code(400).send({ error: "Flutterwave credentials are not configured." });
         const response = await fetch("https://api.flutterwave.com/v3/balances/NGN", { headers: { Authorization: "Bearer " + config.secretKey }, signal: AbortSignal.timeout(15000) });
         if (!response.ok) throw new Error("Flutterwave returned HTTP " + response.status);
@@ -329,8 +347,18 @@ export async function registerAdminRoutes(app: FastifyInstance) {
     } catch (error) {
       await db.execute("UPDATE provider_settings SET verification_status = 'failed', last_verified_at = UTC_TIMESTAMP() WHERE provider = ?", [provider]);
       await audit(identity, request, "provider.connection_verification_failed", "provider", provider, { success: false });
-      request.log.warn({ provider }, "Provider connection verification failed");
-      return reply.code(502).send({ error: "Provider verification failed. Check credentials and network configuration." });
+      const detail = error instanceof Error ? error.message.slice(0, 300) : "Unknown verification error";
+      const errorName = error instanceof Error ? error.name : "UnknownError";
+      request.log.warn({ provider, errorName, detail }, "Provider connection verification failed");
+      const httpStatus = detail.match(/HTTP (\d{3})/)?.[1];
+      const message = provider === "btcpay" ? (httpStatus === "401" || httpStatus === "403" ? "BTCPay rejected the API key or store permissions. Check the key and store scope." : httpStatus ? `BTCPay returned HTTP ${httpStatus}. Check the server URL and Store ID.` : "Could not verify BTCPay. Check HTTPS, DNS and outbound connectivity; see the server log for details.") : httpStatus === "401" || httpStatus === "403"
+        ? "Flutterwave rejected the Secret Key. Confirm the key and that Test/Live environment matches."
+        : httpStatus
+          ? `Flutterwave returned HTTP ${httpStatus}. The provider may be unavailable; retry shortly.`
+          : errorName === "TimeoutError" || errorName === "AbortError"
+            ? "Connection to Flutterwave timed out. Check outbound network access and retry."
+            : "Could not connect to Flutterwave. Check server DNS/TLS and outbound HTTPS access; see the server log for the diagnostic.";
+      return reply.code(502).send({ error: message });
     }
   });
 

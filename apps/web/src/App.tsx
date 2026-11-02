@@ -3,31 +3,45 @@ import AdminApp from "./Admin.js";
 
 type Catalog = {
   products: Array<{ id: number; code: string; name: string; network: string }>;
-  currency: string;
-  denominations: number[];
+  cardCurrency: string;
+  paymentCurrency: string;
+  pricing: { exchangeRateNgnPerUsd: number; issuanceFeeUsd: number; grossProfitNgn: number };
+  denominations: Array<{ amountUsd: number; priceNgn: number }>;
   customAmount: { enabled: boolean; min: number | null; max: number | null; step: number | null };
+  paymentMethods: { flutterwave: boolean; btcpay: boolean };
 };
 type OrderStatus = {
-  orderNumber: string; currency: string; amount: number;
+  orderNumber: string; paymentCurrency: string; paymentAmount: number; cardAmountUsd: number | null;
   status: string; paymentStatus: string; fulfilmentStatus: string;
 };
+
+function CardVisual({ network, comingSoon = false }: { network: "Mastercard" | "Visa"; comingSoon?: boolean }) {
+  const mastercard = network === "Mastercard";
+  return <div className={`payment-card ${mastercard ? "mastercard" : "visa"} ${comingSoon ? "muted-card" : ""}`}>
+    <div className="card-top"><span className="card-chip"><i /></span><span className="card-type">VIRTUAL</span></div>
+    <div className="card-number">•••• &nbsp; •••• &nbsp; •••• &nbsp; 2048</div>
+    <div className="card-bottom"><span>RAADUNS</span>{mastercard ? <span className="mc-mark"><i /><i /></span> : <span className="visa-mark">VISA</span>}</div>
+    {comingSoon && <span className="coming-soon">COMING SOON</span>}
+  </div>;
+}
 
 function Storefront() {
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [selectedProduct, setSelectedProduct] = useState("");
   const [selectedAmount, setSelectedAmount] = useState<number | null>(null);
+  const [paymentMethod, setPaymentMethod] = useState<"flutterwave" | "btcpay">("flutterwave");
   const [customAmount, setCustomAmount] = useState("");
-  const [email, setEmail] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [order, setOrder] = useState<OrderStatus | null>(null);
   const [orderId, setOrderId] = useState("");
   const [checkingStatus, setCheckingStatus] = useState(false);
-  const [verificationOrderId, setVerificationOrderId] = useState("");
+  const [customerEmail, setCustomerEmail] = useState("");
   const [otp, setOtp] = useState("");
   const [otpSent, setOtpSent] = useState(false);
-  const [emailVerified, setEmailVerified] = useState(false);
-  const [customerOrders, setCustomerOrders] = useState<Array<{ orderId: string; orderNumber: string; currency: string; amount: number; status: string; paymentStatus: string; fulfilmentStatus: string }>>([]);
+  const [customerVerified, setCustomerVerified] = useState(false);
+  const [csrfToken, setCsrfToken] = useState("");
+  const [customerOrders, setCustomerOrders] = useState<Array<{ id: string; order_number: string; payment_currency: string; payment_amount: number; card_amount_usd: number | null; order_status: string; payment_status: string; fulfilment_status: string; last4: string | null; latest_payment_provider?: string | null; latest_payment_status?: string | null; latest_payment_url?: string | null }>>([]);
 
   const callbackOrderId = useMemo(() => {
     return window.location.pathname === "/payment/callback"
@@ -36,6 +50,11 @@ function Storefront() {
   }, []);
 
   useEffect(() => {
+    fetch("/api/customer/auth/session", { credentials: "include" }).then(async (response) => {
+      if (!response.ok) return;
+      const session = await response.json() as { customer: { email: string }; csrfToken: string };
+      setCustomerEmail(session.customer.email); setCsrfToken(session.csrfToken); setCustomerVerified(true); void loadCustomerOrders();
+    }).catch(() => undefined);
     fetch("/api/catalog")
       .then(async (response) => {
         if (!response.ok) throw new Error("Card options are temporarily unavailable.");
@@ -43,20 +62,54 @@ function Storefront() {
       })
       .then((data) => {
         setCatalog(data);
-        setSelectedProduct(data.products[0]?.code ?? "");
-        setSelectedAmount(data.denominations[0] ?? null);
+        setSelectedProduct(data.products.find((product) => product.network.toLowerCase() === "mastercard")?.code ?? data.products[0]?.code ?? "");
+        setSelectedAmount(data.denominations[0]?.amountUsd ?? null);
       })
       .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Unable to load card options."));
   }, []);
 
+  async function loadCustomerOrders() {
+    const response = await fetch("/api/customer/orders", { credentials: "include" });
+    if (!response.ok) return;
+    const data = await response.json() as { orders: typeof customerOrders };
+    setCustomerOrders(data.orders);
+  }
+
+  async function requestCode() {
+    setLoading(true); setError("");
+    try {
+      const response = await fetch("/api/customer/auth/request-code", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: customerEmail }) });
+      const data = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(data.error ?? "Unable to send sign-in code.");
+      setOtpSent(true);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to send sign-in code."); }
+    finally { setLoading(false); }
+  }
+
+  async function verifyCode() {
+    setLoading(true); setError("");
+    try {
+      const response = await fetch("/api/customer/auth/verify-code", { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify({ email: customerEmail, code: otp }) });
+      const data = await response.json() as { error?: string; csrfToken?: string; customer?: { email: string } };
+      if (!response.ok || !data.csrfToken) throw new Error(data.error ?? "Unable to verify code.");
+      setCustomerVerified(true); setCustomerEmail(data.customer?.email ?? customerEmail); setCsrfToken(data.csrfToken); setOtp(""); await loadCustomerOrders();
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to verify code."); }
+    finally { setLoading(false); }
+  }
+
+  async function signOutCustomer() {
+    await fetch("/api/customer/auth/logout", { method: "POST", credentials: "include", headers: { "x-csrf-token": csrfToken } });
+    setCustomerVerified(false); setCsrfToken(""); setCustomerOrders([]); setOtpSent(false);
+  }
+
   async function refreshOrderStatus(id: string) {
     setCheckingStatus(true);
     try {
-      const response = await fetch(`/api/orders/${encodeURIComponent(id)}`);
+      const response = await fetch(`/api/orders/${encodeURIComponent(id)}`, { credentials: "include" });
       const payload = await response.json() as OrderStatus & { error?: string };
       if (!response.ok) throw new Error(payload.error ?? "Unable to retrieve order status.");
       setOrder(payload);
-      setOrderId(id);
+      setOrderId(payload.paymentStatus === "successful" ? "" : id);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Unable to retrieve order status.");
     } finally {
@@ -65,20 +118,11 @@ function Storefront() {
   }
 
   useEffect(() => {
-    if (callbackOrderId) {
-      void refreshOrderStatus(callbackOrderId);
-      void refreshCustomerOrders();
-    }
-  }, [callbackOrderId]);
-
-  async function refreshCustomerOrders() {
-    try {
-      const response = await fetch("/api/customer/orders");
-      if (!response.ok) return;
-      const payload = await response.json() as { orders: typeof customerOrders };
-      setCustomerOrders(payload.orders);
-    } catch { /* Customer order history is optional until an email session exists. */ }
-  }
+    if (!callbackOrderId || !customerVerified) return;
+    void refreshOrderStatus(callbackOrderId);
+    const timer = window.setInterval(() => { void refreshOrderStatus(callbackOrderId); }, 10000);
+    return () => window.clearInterval(timer);
+  }, [callbackOrderId, customerVerified]);
 
   async function submitOrder(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -94,21 +138,25 @@ function Storefront() {
     setError("");
     setOrder(null);
     try {
-      const orderResponse = await fetch("/api/orders", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ productCode: selectedProduct, amount, email }),
+      let activeOrderId = orderId;
+      if (!activeOrderId) {
+        const orderResponse = await fetch("/api/orders", {
+          method: "POST", credentials: "include", headers: { "Content-Type": "application/json", "x-csrf-token": csrfToken },
+          body: JSON.stringify({ productCode: selectedProduct, amount }),
+        });
+        const created = await orderResponse.json() as { orderId?: string; error?: string };
+        if (!orderResponse.ok || !created.orderId) throw new Error(created.error ?? "Unable to create your order.");
+        activeOrderId = created.orderId;
+        setOrderId(activeOrderId);
+      }
+      const paymentResponse = await fetch(paymentMethod === "flutterwave" ? "/api/payments/flutterwave/initialize" : "/api/payments/btcpay/initialize", {
+        method: "POST", credentials: "include", headers: { "Content-Type": "application/json", "x-csrf-token": csrfToken },
+        body: JSON.stringify({ orderId: activeOrderId }),
       });
-      const created = await orderResponse.json() as { orderId?: string; error?: string };
-      if (!orderResponse.ok || !created.orderId) throw new Error(created.error ?? "Unable to create your order.");
-      setOrderId(created.orderId);
-      setVerificationOrderId(created.orderId);
-      const otpResponse = await fetch("/api/customer/otp/send", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ orderId: created.orderId }),
-      });
-      const otpResult = await otpResponse.json() as { error?: string };
-      if (!otpResponse.ok) throw new Error(otpResult.error ?? "Unable to send the verification code.");
-      setOtpSent(true);
+      const payment = await paymentResponse.json() as { paymentUrl?: string; error?: string };
+      if (!paymentResponse.ok || !payment.paymentUrl) throw new Error(payment.error ?? "Unable to start payment.");
+      await loadCustomerOrders();
+      window.location.assign(payment.paymentUrl);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Checkout could not be started.");
     } finally {
@@ -116,123 +164,56 @@ function Storefront() {
     }
   }
 
-  async function verifyEmailAndContinue(event: FormEvent<HTMLFormElement>) {
+  const callbackMode = Boolean(callbackOrderId);
+  const chosenAmount = catalog?.customAmount.enabled && customAmount.trim() ? Number(customAmount) : selectedAmount;
+
+  async function handleCheckout(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!verificationOrderId) return;
-    setLoading(true); setError("");
-    try {
-      const response = await fetch("/api/customer/otp/verify", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ orderId: verificationOrderId, code: otp }),
-      });
-      const result = await response.json() as { error?: string };
-      if (!response.ok) throw new Error(result.error ?? "Email verification failed.");
-      setEmailVerified(true);
-      const paymentResponse = await fetch("/api/payments/flutterwave/initialize", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ orderId: verificationOrderId }),
-      });
-      const payment = await paymentResponse.json() as { paymentUrl?: string; error?: string };
-      if (!paymentResponse.ok || !payment.paymentUrl) throw new Error(payment.error ?? "Unable to start payment.");
-      window.location.assign(payment.paymentUrl);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Unable to verify email and start payment.");
-    } finally { setLoading(false); }
+    if (!customerVerified) {
+      if (!customerEmail.trim()) { setError("Enter your email address to continue."); return; }
+      if (!otpSent) await requestCode();
+      else await verifyCode();
+      return;
+    }
+    await submitOrder(event);
   }
 
-  const callbackMode = Boolean(callbackOrderId);
   return (
-    <main className="page">
-      <header className="topbar">
-        <a className="brand" href="/" aria-label="Cards by Raaduns home">
-          <span className="brand-mark">R</span><span>Cards by Raaduns</span>
-        </a>
-        <nav aria-label="Main navigation">
-          <a href="#buy">Buy Card</a><a href="#payment">Payment</a><a href="#my-card">Order Status</a>
-        </nav>
+    <main className="page-shell">
+      <header className="site-header">
+        <a className="brand" href="/" aria-label="Cards by Raaduns home"><span className="brand-icon">R</span><span>RAADUNS<span className="brand-light"> / CARDS</span></span></a>
+        <span className="secure-note"><span className="secure-dot" />Secure checkout</span>
       </header>
 
-      <section className="hero">
-        <p className="eyebrow">VIRTUAL PAYMENT CARDS</p>
-        <h1>Your virtual Mastercard, ready for what’s next.</h1>
-        <p className="intro">Choose an available amount, enter your email, and complete checkout through Flutterwave. Your card is issued after payment is verified.</p>
-        <a className="primary-link" href="#buy">Explore card options</a>
-      </section>
-
-      {verificationOrderId && !emailVerified && !callbackMode ? (
-        <section className="purchase" id="verify-email">
-          <p className="eyebrow">EMAIL VERIFICATION</p>
-          <h2>Check your inbox</h2>
-          <p className="muted">{otpSent ? `We sent a six-digit verification code to ${email}.` : `We could not send a code to ${email} yet. Request a new code below.`} Verify that you own this email address before continuing to secure payment.</p>
-          {otpSent && <form onSubmit={verifyEmailAndContinue}>
-            <label className="field-label" htmlFor="otp">Six-digit verification code</label>
-            <input id="otp" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" minLength={6} maxLength={6} required value={otp} onChange={(event) => setOtp(event.target.value.replace(/\D/g, "").slice(0, 6))} placeholder="000000" />
-            <button className="primary-button" type="submit" disabled={loading || otp.length !== 6}>{loading ? "Verifying…" : "Verify email and continue to payment"}</button>
-          </form>}
-          <button className="secondary-button" type="button" disabled={loading} onClick={async () => { setError(""); const response = await fetch("/api/customer/otp/send", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ orderId: verificationOrderId }) }); const result = await response.json() as { error?: string }; if (!response.ok) setError(result.error ?? "Unable to resend code."); else { setOtpSent(true); setError("A new verification code has been sent."); } }}>Resend verification code</button>
-          {error && <p className="error" role="alert">{error}</p>}
-          <p className="notice">The code expires after 10 minutes. Payment cannot start until email ownership is verified.</p>
-        </section>
-      ) : callbackMode ? (
-        <section className="purchase" id="payment">
-          <p className="eyebrow">PAYMENT RESULT</p><h2>Checking your order</h2>
-          {checkingStatus && <p className="muted">Retrieving the latest verified status…</p>}
-          {order && <div className="status-panel">
-            <strong>{order.orderNumber}</strong>
-            <p>{order.paymentStatus === "successful" ? "Payment verified." : "Payment is not yet confirmed."}</p>
-            <span>Payment: {order.paymentStatus.replaceAll("_", " ")}</span>
-            <span>Card fulfilment: {order.fulfilmentStatus.replaceAll("_", " ")}</span>
-            <span>Order: {order.status.replaceAll("_", " ")}</span>
-            <p className="notice">A card is issued only after the payment provider confirms the transaction.</p>
-          </div>}
-          {error && <p className="error" role="alert">{error}</p>}
-          {orderId && <button className="primary-button" type="button" onClick={() => void refreshOrderStatus(orderId)} disabled={checkingStatus}>Refresh status</button>}
-          {customerOrders.length > 0 && <div className="status-panel" id="my-card"><h3>Your orders</h3>{customerOrders.map((item) => <p key={item.orderId}><strong>{item.orderNumber}</strong> · {item.currency} {item.amount} · {item.paymentStatus} · {item.fulfilmentStatus}</p>)}</div>}
-        </section>
-      ) : (
-        <section className="purchase" id="buy">
-          <div>
-            <p className="eyebrow">START AN ORDER</p><h2>Choose your card amount</h2>
-            <p className="muted">Select a fixed USD denomination and provide the email address for your order.</p>
-          </div>
-          {!catalog && !error && <p className="muted">Loading available card options…</p>}
-          {catalog && (
-            <form onSubmit={submitOrder}>
-              <label className="field-label" htmlFor="product">Card product</label>
-              <select id="product" value={selectedProduct} onChange={(event) => setSelectedProduct(event.target.value)} required>
-                {catalog.products.map((product) => <option key={product.code} value={product.code}>{product.name}</option>)}
-              </select>
-              <span className="field-label">Choose amount ({catalog.currency})</span>
-              <div className="amount-grid">
-                {catalog.denominations.map((amount) => (
-                  <button className={selectedAmount === amount && !customAmount ? "amount selected" : "amount"} type="button" key={amount}
-                    onClick={() => { setSelectedAmount(amount); setCustomAmount(""); }}>
-                    <span className="currency">{catalog.currency}</span><strong>${amount}</strong>
-                  </button>
-                ))}
-              </div>
-              {catalog.customAmount.enabled && (
-                <div className="custom-amount">
-                  <label className="field-label" htmlFor="customAmount">Or enter a custom amount ({catalog.customAmount.min}–{catalog.customAmount.max}, step {catalog.customAmount.step})</label>
-                  <input id="customAmount" type="number" min={catalog.customAmount.min ?? undefined} max={catalog.customAmount.max ?? undefined}
-                    step={catalog.customAmount.step ?? "any"} value={customAmount}
-                    onChange={(event) => setCustomAmount(event.target.value)} placeholder="Enter amount" />
-                </div>
-              )}
-              <label className="field-label" htmlFor="email">Email address</label>
-              <input id="email" type="email" autoComplete="email" maxLength={254} required value={email}
-                onChange={(event) => setEmail(event.target.value)} placeholder="you@example.com" />
-              <button className="primary-button" type="submit" disabled={loading || !catalog.products.length || !catalog.denominations.length}>
-                {loading ? "Preparing checkout…" : "Continue to secure payment"}
-              </button>
+      {callbackMode ? (
+        <main className="status-page"><div className="status-panel"><a className="brand" href="/"><span className="brand-icon">R</span><span>RAADUNS / CARDS</span></a><h1>Payment status</h1>
+          {!customerVerified ? <div className="callback-auth"><p>Sign in with the email used for this order to view its status.</p><input type="email" autoComplete="email" value={customerEmail} onChange={(event) => setCustomerEmail(event.target.value)} placeholder="you@example.com" />{!otpSent ? <button className="continue-button" type="button" disabled={loading || !customerEmail.trim()} onClick={() => void requestCode()}>Email sign-in code</button> : <><input inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={otp} onChange={(event) => setOtp(event.target.value)} placeholder="Six-digit code" /><button className="continue-button" type="button" disabled={loading || otp.length !== 6} onClick={() => void verifyCode()}>Verify email</button></>}</div> : checkingStatus ? <p className="notice">Checking your payment...</p> : order ? <><p>Order reference: {order.orderNumber}</p><p>Payment: {order.paymentStatus.replaceAll("_", " ")}</p><p>Card fulfilment: {order.fulfilmentStatus.replaceAll("_", " ")}</p><p>Card fulfilment begins after payment is verified.</p><button className="continue-button" type="button" onClick={() => void refreshOrderStatus(callbackOrderId)}>Refresh status</button></> : <p className="notice">Order status is not yet available.</p>}
+          {error && <p className="notice error" role="alert">{error}</p>}<a className="back-link" href="/">Return to Cards by Raaduns</a>
+        </div></main>
+      ) : <>
+        <section className="hero"><div className="hero-copy"><h1>Get Your Virtual Card Instantly</h1><p className="kyc-line">NO KYC REQUIRED</p></div><div className="cards-stage" aria-label="Virtual Mastercard and Visa card illustrations"><div className="card-wrap mastercard-wrap"><CardVisual network="Mastercard" /></div><div className="card-wrap visa-wrap"><CardVisual network="Visa" comingSoon /></div></div></section>
+        <section className="purchase-panel" aria-labelledby="amount-heading"><div className="section-heading"><h2 id="amount-heading">Choose your card amount</h2><p>Select a USD card value</p></div>
+          {!catalog && !error ? <p className="notice">Loading available card amounts...</p> : null}
+          {error && !catalog && <p className="notice error" role="alert">{error}</p>}
+          {catalog && <>
+            <div className="denomination-grid">{catalog.denominations.map((item) => <button type="button" key={item.amountUsd} className={`denomination ${Number(chosenAmount) === Number(item.amountUsd) && !customAmount ? "selected" : ""}`} onClick={() => { setSelectedAmount(item.amountUsd); setCustomAmount(""); setOrderId(""); setError(""); }}><span className="usd-amount">${item.amountUsd}</span><span className="local-price">{item.priceNgn.toLocaleString("en-NG", { style: "currency", currency: "NGN", maximumFractionDigits: 0 })}</span></button>)}</div>
+            {catalog.customAmount.enabled && <div className="custom-row"><label htmlFor="custom-amount">Custom amount (USD)</label><input id="custom-amount" type="number" min={catalog.customAmount.min ?? undefined} max={catalog.customAmount.max ?? undefined} step={catalog.customAmount.step ?? 1} value={customAmount} onChange={(event) => { setCustomAmount(event.target.value); setOrderId(""); setError(""); }} placeholder={`${catalog.customAmount.min}–${catalog.customAmount.max}`} />{customAmount.trim() && Number.isFinite(Number(customAmount)) && Number(customAmount) >= Number(catalog.customAmount.min) && Number(customAmount) <= Number(catalog.customAmount.max) && Math.abs((Number(customAmount)-Number(catalog.customAmount.min))/Number(catalog.customAmount.step)-Math.round((Number(customAmount)-Number(catalog.customAmount.min))/Number(catalog.customAmount.step))) < 1e-8 && <small>{((((Number(customAmount)+catalog.pricing.issuanceFeeUsd)*catalog.pricing.exchangeRateNgnPerUsd)+catalog.pricing.grossProfitNgn)).toLocaleString("en-NG", { style: "currency", currency: "NGN", maximumFractionDigits: 0 })}</small>}</div>}
+            <form className="order-form" onSubmit={(event) => void handleCheckout(event)}>
+              <label htmlFor="customer-email">Email address</label><div className="form-row"><input id="customer-email" type="email" autoComplete="email" required value={customerEmail} onChange={(event) => setCustomerEmail(event.target.value)} readOnly={customerVerified || otpSent} placeholder="you@example.com" />
+                <button className="continue-button" type="submit" disabled={loading || !chosenAmount || !customerEmail.trim()}>{loading ? "Processing..." : customerVerified ? (orderId ? "Retry payment" : "Continue to payment") : otpSent ? "Verify email" : "Continue to payment"}<span aria-hidden="true">→</span></button></div>
+              {otpSent && !customerVerified && <div className="code-step"><label htmlFor="customer-otp">Enter the six-digit code sent to your email</label><input id="customer-otp" inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={otp} onChange={(event) => setOtp(event.target.value)} placeholder="000000" /><button className="auth-secondary" type="button" onClick={() => { setOtpSent(false); setOtp(""); setError(""); }}>Change email address</button></div>}
+              {customerVerified && <p className="verified-note">Email verified: {customerEmail}</p>}
+              {catalog.paymentMethods.btcpay && <div className="payment-method-row"><label htmlFor="payment-method">Payment method</label><select id="payment-method" value={paymentMethod} onChange={(event) => setPaymentMethod(event.target.value as "flutterwave" | "btcpay")}><option value="flutterwave">Bank transfer / card</option><option value="btcpay">Bitcoin / Litecoin</option></select></div>}
+              {error && <p className="notice error" role="alert">{error}</p>}
             </form>
-          )}
-          {error && <p className="error" role="alert">{error}</p>}
-          <p className="notice">Card issuance starts only after payment verification. Card availability and issuance are subject to provider confirmation.</p>
+          </>}
+          <p className="fine-print">Mastercard is available now. Visa is coming soon. Card value is issued in USD; payment is collected in the currency shown at checkout. Issuance begins only after payment is verified.</p>
         </section>
-      )}
-
-      <footer><span>© {new Date().getFullYear()} Cards by Raaduns</span><span>Secure virtual card services</span></footer>
+        {customerVerified && <section className="customer-orders" id="my-card"><div className="orders-heading"><div><p className="eyebrow">CUSTOMER ACCOUNT</p><h2>My orders</h2></div><button type="button" onClick={() => void loadCustomerOrders()}>Refresh</button></div>
+          {customerOrders.length === 0 ? <p className="muted">No orders associated with this email yet.</p> : customerOrders.map((item) => <article className="customer-order" key={item.id}><div><strong>{item.order_number}</strong><span>Card: {item.card_amount_usd === null ? "Value pending" : "$" + Number(item.card_amount_usd).toFixed(2) + " USD"}</span><span>Pay: {Number(item.payment_amount).toLocaleString("en-NG", { style: "currency", currency: item.payment_currency })}</span></div><div><span>Payment: {item.payment_status.replaceAll("_", " ")}</span><span>Fulfilment: {item.fulfilment_status.replaceAll("_", " ")}</span></div><div><span>Order: {item.order_status.replaceAll("_", " ")}</span><span>{item.last4 ? `Card ending ${item.last4}` : "Card not yet available"}</span></div><div className="customer-order-actions"><button type="button" onClick={() => void refreshOrderStatus(item.id)}>View status</button>{item.payment_status !== "successful" && item.latest_payment_url && <a className="resume-payment" href={item.latest_payment_url}>Resume payment</a>}{item.payment_status !== "successful" && (item.latest_payment_status === "failed" || !item.latest_payment_status) && <button type="button" onClick={() => { setOrderId(item.id); if (item.latest_payment_provider === "btcpay" || item.latest_payment_provider === "flutterwave") setPaymentMethod(item.latest_payment_provider); if (item.card_amount_usd && !catalog?.denominations.some((d) => d.amountUsd === Number(item.card_amount_usd))) setCustomAmount(String(item.card_amount_usd)); else { setSelectedAmount(Number(item.card_amount_usd)); setCustomAmount(""); } window.scrollTo({ top: 0, behavior: "smooth" }); }}>Retry checkout</button>}{item.payment_status !== "successful" && item.latest_payment_status === "pending" && !item.latest_payment_url && <span className="payment-reconciling">Payment attempt is being reconciled. Check status before retrying.</span>}</div></article>)}
+        </section>}
+        <footer className="site-footer"><span>© {new Date().getFullYear()} Cards by Raaduns</span><span>Virtual cards, made simple.</span></footer>
+      </>}
     </main>
   );
 }

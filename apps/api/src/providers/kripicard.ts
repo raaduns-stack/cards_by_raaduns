@@ -4,7 +4,7 @@ import { z } from "zod";
 import { db } from "../db.js";
 import { getProviderConfig } from "../provider-config.js";
 
-type OrderRow = RowDataPacket & { id: string; customer_email: string; amount: number; payment_status: string };
+type OrderRow = RowDataPacket & { id: string; customer_email: string; card_amount_usd: number | null; payment_status: string };
 type IssuanceRow = RowDataPacket & {
   id: number; order_id: string; provider_card_id: string | null;
   provider_order_id: string | null; provider_reference: string | null; issuance_status: string;
@@ -30,10 +30,15 @@ async function providerRequest(path: string, body: Record<string, unknown>) {
 
 export async function issueCardForOrder(orderId: string, logger?: { error: (obj: unknown, message: string) => void }) {
   const [orders] = await db.query<OrderRow[]>(
-    "SELECT id, customer_email, amount, payment_status FROM orders WHERE id = ?", [orderId],
+    "SELECT id, customer_email, card_amount_usd, payment_status FROM orders WHERE id = ?", [orderId],
   );
   const order = orders[0];
   if (!order || order.payment_status !== "successful") return { status: "not_payable" };
+  if (order.card_amount_usd === null || !Number.isFinite(Number(order.card_amount_usd)) || Number(order.card_amount_usd) <= 0) {
+    await db.execute("UPDATE orders SET fulfilment_status = 'manual_review', order_status = 'manual_review' WHERE id = ? AND payment_status = 'successful'", [order.id]);
+    logger?.error({ orderId }, "Card face value is unavailable; issuance blocked for manual review");
+    return { status: "manual_review" };
+  }
 
   await db.execute(
     "INSERT IGNORE INTO issued_cards (order_id, provider, issuance_status, name_on_card, bin) VALUES (?, 'kripicard', 'queued', ?, ?)",
@@ -63,7 +68,7 @@ export async function issueCardForOrder(orderId: string, logger?: { error: (obj:
   }
   try {
     const { statusCode, payload } = await providerRequest("/api/external/cards/createcard", {
-      bin: cardConfig.bin, amount: Number(order.amount),
+      bin: cardConfig.bin, amount: Number(order.card_amount_usd),
       name_on_card: cardConfig.name_on_card, email: order.customer_email,
     });
     if (statusCode === 200 && payload.success === true && payload.card_id) {
@@ -72,7 +77,7 @@ export async function issueCardForOrder(orderId: string, logger?: { error: (obj:
         [String(payload.card_id), payload.last_4 ? String(payload.last_4).slice(-4) : null, issuance.id],
       );
       await db.execute(
-        "UPDATE orders SET fulfilment_status = 'completed', order_status = 'fulfilment_pending' WHERE id = ? AND order_status <> 'manual_review'", [order.id],
+        "UPDATE orders SET fulfilment_status = 'completed', order_status = 'fulfilled' WHERE id = ? AND order_status <> 'manual_review'", [order.id],
       );
       return { status: "active" };
     }
@@ -117,7 +122,7 @@ export async function pollPendingIssuances(limit = 50) {
       const { statusCode, payload } = await providerRequest("/api/external/cards/request-status", identifier);
       if (statusCode === 200 && payload.success === true && payload.status === "completed" && payload.card_id) {
         await db.execute("UPDATE issued_cards SET provider_card_id = ?, issuance_status = 'active' WHERE id = ?", [String(payload.card_id), issuance.id]);
-        await db.execute("UPDATE orders SET fulfilment_status = 'completed', order_status = 'fulfilment_pending' WHERE id = ?", [issuance.order_id]);
+        await db.execute("UPDATE orders SET fulfilment_status = 'completed', order_status = 'fulfilled' WHERE id = ?", [issuance.order_id]);
         results.push({ orderId: issuance.order_id, status: "active" });
       } else if (statusCode === 200 && payload.status === "refunded") {
         await db.execute("UPDATE issued_cards SET issuance_status = 'refunded' WHERE id = ?", [issuance.id]);
