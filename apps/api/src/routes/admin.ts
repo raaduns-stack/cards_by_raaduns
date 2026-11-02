@@ -362,6 +362,23 @@ export async function registerAdminRoutes(app: FastifyInstance) {
     }
   });
 
+  app.get("/api/admin/fulfilment", async (request, reply) => {
+    const identity = await authenticate(request, reply);
+    if (!identity) return reply;
+    const parsed = z.object({ status: z.enum(["all", "queued", "processing", "completed", "failed", "manual_review"]).default("all"), page: z.coerce.number().int().min(1).default(1) }).safeParse(request.query);
+    if (!parsed.success) return reply.code(400).send({ error: "Invalid fulfilment filters." });
+    const where = parsed.data.status === "all" ? "o.payment_status = 'successful'" : "o.payment_status = 'successful' AND o.fulfilment_status = ?";
+    const params = parsed.data.status === "all" ? [] : [parsed.data.status];
+    const [rows] = await db.query<Array<RowDataPacket & Record<string, unknown>>>(
+      `SELECT o.id, o.order_number, o.customer_email, o.card_amount_usd, o.payment_currency, o.payment_amount_ngn, o.order_status, o.payment_status, o.fulfilment_status, o.created_at, c.provider, c.issuance_status, c.provider_reference, c.provider_order_id, c.provider_card_id, c.last4, c.updated_at AS issuance_updated_at
+       FROM orders o LEFT JOIN issued_cards c ON c.order_id = o.id
+       WHERE ${where} ORDER BY CASE o.fulfilment_status WHEN 'manual_review' THEN 0 WHEN 'failed' THEN 1 WHEN 'queued' THEN 2 WHEN 'processing' THEN 3 ELSE 4 END, o.updated_at DESC
+       LIMIT 50 OFFSET ?`, [...params, (parsed.data.page - 1) * 50],
+    );
+    const [totals] = await db.query<Array<RowDataPacket & { total: number }>>(`SELECT COUNT(*) AS total FROM orders o WHERE ${where}`, params);
+    return { items: rows, total: totals[0]?.total ?? 0, page: parsed.data.page, pageSize: 50 };
+  });
+
   app.get("/api/admin/audit", async (request, reply) => {
     const identity = await authenticate(request, reply);
     if (!identity) return reply;
@@ -376,3 +393,5 @@ export async function registerAdminRoutes(app: FastifyInstance) {
     return { events: rows, page: parsed.data.page, pageSize: 50 };
   });
 }
+
+[executed on device: mail.quicrefill.com (657bc0f0-b268-4295-8ef1-fac3aa0eceb5)]
