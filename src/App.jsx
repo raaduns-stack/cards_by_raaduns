@@ -16,10 +16,19 @@ export default function App() {
   const [amount,setAmount]=useState(null),[email,setEmail]=useState(''),[code,setCode]=useState('');
   const [codeSent,setCodeSent]=useState(false),[signedIn,setSignedIn]=useState(false),[csrf,setCsrf]=useState('');
   const [busy,setBusy]=useState(false),[error,setError]=useState(''),[custom,setCustom]=useState('');
+  const [callbackOrder,setCallbackOrder]=useState(null),[callbackError,setCallbackError]=useState('');
+  const callbackOrderId=useMemo(()=>window.location.pathname.startsWith('/payment/callback')?new URLSearchParams(window.location.search).get('orderId')||'': '',[]);
   useEffect(()=>{
+    if(callbackOrderId){
+      fetch(`/api/orders/${encodeURIComponent(callbackOrderId)}`,{credentials:'include'})
+        .then(async r=>{const d=await r.json();if(!r.ok)throw new Error(d.error||'Unable to retrieve payment status.');setCallbackOrder(d)})
+        .catch(e=>setCallbackError(e.message||'Unable to retrieve payment status.'));
+      return;
+    }
+    if(window.location.pathname.startsWith('/admin'))return;
     fetch('/api/customer/auth/session',{credentials:'include'}).then(async r=>{if(!r.ok)return;const s=await r.json();setEmail(s.customer?.email||'');setCsrf(s.csrfToken||'');setSignedIn(true)}).catch(()=>{});
     fetch('/api/catalog').then(async r=>{const d=await r.json();if(!r.ok)throw new Error(d.message||'Card options are temporarily unavailable.');setCatalog(d)}).catch(e=>setCatalogError(e.message||'Unable to load card options.'));
-  },[]);
+  },[callbackOrderId]);
   const product=catalog?.products?.find(p=>p.network?.toLowerCase()==='mastercard')||catalog?.products?.[0];
   const denominations=useMemo(()=>catalog?.denominations||[],[catalog]);
   const money=v=>Number(v).toLocaleString('en-US',{maximumFractionDigits:2});
@@ -46,6 +55,8 @@ export default function App() {
       }
     }catch(e){setError(e.message||'Something went wrong. Please try again.')}finally{setBusy(false)}
   }
+  if(window.location.pathname.startsWith('/admin'))return <iframe className="admin-frame" src="/admin/index.html" title="Cards administration"/>;
+  if(callbackOrderId)return <main className="status-page"><div className="status-panel"><a className="brand" href="/"><span className="brand-icon">R</span><span>RAADUNS / CARDS</span></a><h1>Payment status</h1>{callbackError?<p className="notice error">{callbackError}</p>:!callbackOrder?<p className="notice">Checking your payment...</p>:<><p>Order reference: {callbackOrder.orderId||callbackOrder.id||callbackOrderId}</p><p>Payment: {callbackOrder.paymentStatus||callbackOrder.payment_status||callbackOrder.status||'Pending verification'}</p><p>Card fulfilment begins after payment is verified.</p></>}<a className="back-link" href="/">Return to Cards by Raaduns</a></div></main>;
   return <main className="page-shell">
     <header className="site-header"><a className="brand" href="/" aria-label="Cards by Raaduns home"><span className="brand-icon">R</span><span>RAADUNS<span className="brand-light"> / CARDS</span></span></a><span className="secure-note"><span className="secure-dot"/>Secure checkout</span></header>
     <section className="hero"><div className="hero-copy"><h1>Get Your Virtual Card Instantly</h1><p className="kyc-line">NO KYC REQUIRED</p></div><div className="cards-stage" aria-label="Virtual Mastercard and Visa card illustrations"><div className="card-wrap mastercard-wrap"><Card network="Mastercard"/></div><div className="card-wrap visa-wrap"><Card network="Visa" comingSoon/></div></div></section>
