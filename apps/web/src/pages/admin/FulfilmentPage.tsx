@@ -21,5 +21,3 @@ export default function FulfilmentPage({ items }: { items: FulfilmentItem[] }) {
     <p className="admin-muted">Pending issuance is polled by the protected server job. Do not retry card creation manually when a provider request may already be pending.</p>
   </>;
 }
-
-[executed on device: mail.quicrefill.com (657bc0f0-b268-4295-8ef1-fac3aa0eceb5)]
