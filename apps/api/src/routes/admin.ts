@@ -365,7 +365,7 @@ export async function registerAdminRoutes(app: FastifyInstance) {
   app.get("/api/admin/customers", async (request, reply) => {
     const identity = await authenticate(request, reply);
     if (!identity) return reply;
-    const parsed = z.object({ search: z.string().trim().max(120).optional(), page: z.coerce.number().int().min(1).default(1) }).safeParse(request.query);
+    const parsed = z.object({ search: z.string().trim().max(120).optional(), page: z.coerce.number().int().min(1).max(100000).default(1) }).safeParse(request.query);
     if (!parsed.success) return reply.code(400).send({ error: "Invalid customer filters." });
     const search = parsed.data.search ?? "";
     const where = search ? "WHERE c.email LIKE ?" : "";
@@ -383,6 +383,7 @@ export async function registerAdminRoutes(app: FastifyInstance) {
       [...params, (parsed.data.page - 1) * 50],
     );
     const [totals] = await db.query<Array<RowDataPacket & { total: number }>>(`SELECT COUNT(*) AS total FROM customers c ${where}`, params);
+    await audit(identity, request, "customer.list_viewed", "customer", null, { page: parsed.data.page, searched: Boolean(search) });
     return { customers, total: totals[0]?.total ?? 0, page: parsed.data.page, pageSize: 50 };
   });
 
@@ -396,6 +397,7 @@ export async function registerAdminRoutes(app: FastifyInstance) {
     );
     const customer = customers[0];
     if (!customer) return reply.code(404).send({ error: "Customer not found." });
+    await audit(identity, request, "customer.viewed", "customer", String(parsed.data.customerId), {});
     const [orders] = await db.query<Array<RowDataPacket & Record<string, unknown>>>(
       `SELECT o.id, o.order_number, o.card_amount_usd, o.payment_currency,
         COALESCE(o.payment_amount_ngn, o.amount) AS payment_amount,
