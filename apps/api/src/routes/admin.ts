@@ -362,6 +362,51 @@ export async function registerAdminRoutes(app: FastifyInstance) {
     }
   });
 
+  app.get("/api/admin/customers", async (request, reply) => {
+    const identity = await authenticate(request, reply);
+    if (!identity) return reply;
+    const parsed = z.object({ search: z.string().trim().max(120).optional(), page: z.coerce.number().int().min(1).default(1) }).safeParse(request.query);
+    if (!parsed.success) return reply.code(400).send({ error: "Invalid customer filters." });
+    const search = parsed.data.search ?? "";
+    const where = search ? "WHERE c.email LIKE ?" : "";
+    const params = search ? [`%${search}%`] : [];
+    const [customers] = await db.query<Array<RowDataPacket & Record<string, unknown>>>(
+      `SELECT c.id, c.email, c.email_verified_at, c.created_at,
+        COUNT(DISTINCT o.id) AS order_count,
+        COUNT(DISTINCT CASE WHEN o.payment_status = 'successful' THEN o.id END) AS paid_order_count,
+        COUNT(DISTINCT ic.id) AS issued_card_count,
+        MAX(o.created_at) AS last_order_at
+       FROM customers c LEFT JOIN orders o ON o.customer_id = c.id
+       LEFT JOIN issued_cards ic ON ic.order_id = o.id
+       ${where} GROUP BY c.id, c.email, c.email_verified_at, c.created_at
+       ORDER BY last_order_at DESC, c.created_at DESC LIMIT 50 OFFSET ?`,
+      [...params, (parsed.data.page - 1) * 50],
+    );
+    const [totals] = await db.query<Array<RowDataPacket & { total: number }>>(`SELECT COUNT(*) AS total FROM customers c ${where}`, params);
+    return { customers, total: totals[0]?.total ?? 0, page: parsed.data.page, pageSize: 50 };
+  });
+
+  app.get("/api/admin/customers/:customerId", async (request, reply) => {
+    const identity = await authenticate(request, reply);
+    if (!identity) return reply;
+    const parsed = z.object({ customerId: z.coerce.number().int().positive() }).safeParse(request.params);
+    if (!parsed.success) return reply.code(400).send({ error: "Invalid customer ID." });
+    const [customers] = await db.query<Array<RowDataPacket & Record<string, unknown>>>(
+      "SELECT id, email, email_verified_at, created_at FROM customers WHERE id = ? LIMIT 1", [parsed.data.customerId],
+    );
+    const customer = customers[0];
+    if (!customer) return reply.code(404).send({ error: "Customer not found." });
+    const [orders] = await db.query<Array<RowDataPacket & Record<string, unknown>>>(
+      `SELECT o.id, o.order_number, o.card_amount_usd, o.payment_currency,
+        COALESCE(o.payment_amount_ngn, o.amount) AS payment_amount,
+        o.order_status, o.payment_status, o.fulfilment_status, o.created_at,
+        ic.issuance_status, ic.last4, ic.provider
+       FROM orders o LEFT JOIN issued_cards ic ON ic.order_id = o.id
+       WHERE o.customer_id = ? ORDER BY o.created_at DESC LIMIT 100`, [parsed.data.customerId],
+    );
+    return { customer, orders };
+  });
+
   app.get("/api/admin/fulfilment", async (request, reply) => {
     const identity = await authenticate(request, reply);
     if (!identity) return reply;
@@ -393,5 +438,3 @@ export async function registerAdminRoutes(app: FastifyInstance) {
     return { events: rows, page: parsed.data.page, pageSize: 50 };
   });
 }
-
-[executed on device: mail.quicrefill.com (657bc0f0-b268-4295-8ef1-fac3aa0eceb5)]
