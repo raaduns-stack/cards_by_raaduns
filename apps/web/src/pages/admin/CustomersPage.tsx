@@ -26,7 +26,7 @@ export default function CustomersPage({ customers, search, onSearch, onApply, pa
       </tbody></table></div>
     </section>}
     <div className="admin-section-heading"><div><h2>Customer records</h2><p className="admin-muted">Only customers who have verified control of their email are listed.</p></div></div>
-    <div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>Customer</th><th>Orders</th><th>Paid orders</th><th>Issued cards</th><th>Last order</th><th>Joined</th><th></th></tr></thead><tbody>
+    <div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>Customer</th><th>Orders</th><th>Paid orders</th><th>Card records</th><th>Last order</th><th>Joined</th><th></th></tr></thead><tbody>
       {customers.map((customer) => <tr key={customer.id}><td><strong>{customer.email}</strong><small>Email verified {date(customer.email_verified_at)}</small></td><td>{customer.order_count}</td><td>{customer.paid_order_count}</td><td>{customer.issued_card_count}</td><td>{date(customer.last_order_at)}</td><td>{date(customer.created_at)}</td><td><button onClick={() => onOpen(customer.id)}>View customer</button></td></tr>)}
       {!customers.length && <tr><td colSpan={7}>No verified customer records found.</td></tr>}
     </tbody></table></div>
