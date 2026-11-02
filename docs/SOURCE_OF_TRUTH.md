@@ -28,6 +28,14 @@ Cards by Raaduns sells virtual payment cards. Customers select a card network wh
 - Use HTTPS for all customer and provider traffic.
 - Do not claim "No KYC required" until issuer/provider rules and applicable legal requirements are verified.
 
+## Provider settings (CTO-approved implementation)
+- Admin-only Provider Settings manage Flutterwave, Kripicard, and SMTP credentials.
+- Provider credentials may be stored in MySQL only as AES-256-GCM authenticated ciphertext. The 32-byte encryption key is supplied as APP_ENCRYPTION_KEY (base64) through protected server configuration; it must never be committed, exposed to the browser, or included in logs.
+- Provider API responses expose configured/not-configured metadata only. Secret values are write-only and must never be returned by an API.
+- Credential changes and connection verification outcomes are recorded in the admin audit log without secret values.
+- Flutterwave and SMTP support non-transactional connection checks. Kripicard has no verified non-issuing credential-check endpoint in the supplied provider documentation; do not create a card to test credentials.
+- Provider settings do not authorize live payments, card issuance, or production activation by themselves.
+
 ## Provider constraints and unresolved items
 - Kripicard documentation supplied to the project describes card creation as Mastercard issuance. Visa availability and its supplier/issuance route remain unconfirmed; do not offer Visa as available until verified.
 - Kripicard API details and balance responses may be pending or unknown. Display unknown/pending balance states accurately; never substitute zero for an unknown balance.

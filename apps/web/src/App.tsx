@@ -23,6 +23,11 @@ function Storefront() {
   const [order, setOrder] = useState<OrderStatus | null>(null);
   const [orderId, setOrderId] = useState("");
   const [checkingStatus, setCheckingStatus] = useState(false);
+  const [verificationOrderId, setVerificationOrderId] = useState("");
+  const [otp, setOtp] = useState("");
+  const [otpSent, setOtpSent] = useState(false);
+  const [emailVerified, setEmailVerified] = useState(false);
+  const [customerOrders, setCustomerOrders] = useState<Array<{ orderId: string; orderNumber: string; currency: string; amount: number; status: string; paymentStatus: string; fulfilmentStatus: string }>>([]);
 
   const callbackOrderId = useMemo(() => {
     return window.location.pathname === "/payment/callback"
@@ -60,8 +65,20 @@ function Storefront() {
   }
 
   useEffect(() => {
-    if (callbackOrderId) void refreshOrderStatus(callbackOrderId);
+    if (callbackOrderId) {
+      void refreshOrderStatus(callbackOrderId);
+      void refreshCustomerOrders();
+    }
   }, [callbackOrderId]);
+
+  async function refreshCustomerOrders() {
+    try {
+      const response = await fetch("/api/customer/orders");
+      if (!response.ok) return;
+      const payload = await response.json() as { orders: typeof customerOrders };
+      setCustomerOrders(payload.orders);
+    } catch { /* Customer order history is optional until an email session exists. */ }
+  }
 
   async function submitOrder(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -84,18 +101,43 @@ function Storefront() {
       const created = await orderResponse.json() as { orderId?: string; error?: string };
       if (!orderResponse.ok || !created.orderId) throw new Error(created.error ?? "Unable to create your order.");
       setOrderId(created.orderId);
-      const paymentResponse = await fetch("/api/payments/flutterwave/initialize", {
+      setVerificationOrderId(created.orderId);
+      const otpResponse = await fetch("/api/customer/otp/send", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ orderId: created.orderId }),
       });
-      const payment = await paymentResponse.json() as { paymentUrl?: string; error?: string };
-      if (!paymentResponse.ok || !payment.paymentUrl) throw new Error(payment.error ?? "Unable to start payment.");
-      window.location.assign(payment.paymentUrl);
+      const otpResult = await otpResponse.json() as { error?: string };
+      if (!otpResponse.ok) throw new Error(otpResult.error ?? "Unable to send the verification code.");
+      setOtpSent(true);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Checkout could not be started.");
     } finally {
       setLoading(false);
     }
+  }
+
+  async function verifyEmailAndContinue(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!verificationOrderId) return;
+    setLoading(true); setError("");
+    try {
+      const response = await fetch("/api/customer/otp/verify", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ orderId: verificationOrderId, code: otp }),
+      });
+      const result = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(result.error ?? "Email verification failed.");
+      setEmailVerified(true);
+      const paymentResponse = await fetch("/api/payments/flutterwave/initialize", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ orderId: verificationOrderId }),
+      });
+      const payment = await paymentResponse.json() as { paymentUrl?: string; error?: string };
+      if (!paymentResponse.ok || !payment.paymentUrl) throw new Error(payment.error ?? "Unable to start payment.");
+      window.location.assign(payment.paymentUrl);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to verify email and start payment.");
+    } finally { setLoading(false); }
   }
 
   const callbackMode = Boolean(callbackOrderId);
@@ -117,7 +159,21 @@ function Storefront() {
         <a className="primary-link" href="#buy">Explore card options</a>
       </section>
 
-      {callbackMode ? (
+      {verificationOrderId && !emailVerified && !callbackMode ? (
+        <section className="purchase" id="verify-email">
+          <p className="eyebrow">EMAIL VERIFICATION</p>
+          <h2>Check your inbox</h2>
+          <p className="muted">{otpSent ? `We sent a six-digit verification code to ${email}.` : `We could not send a code to ${email} yet. Request a new code below.`} Verify that you own this email address before continuing to secure payment.</p>
+          {otpSent && <form onSubmit={verifyEmailAndContinue}>
+            <label className="field-label" htmlFor="otp">Six-digit verification code</label>
+            <input id="otp" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" minLength={6} maxLength={6} required value={otp} onChange={(event) => setOtp(event.target.value.replace(/\D/g, "").slice(0, 6))} placeholder="000000" />
+            <button className="primary-button" type="submit" disabled={loading || otp.length !== 6}>{loading ? "Verifying…" : "Verify email and continue to payment"}</button>
+          </form>}
+          <button className="secondary-button" type="button" disabled={loading} onClick={async () => { setError(""); const response = await fetch("/api/customer/otp/send", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ orderId: verificationOrderId }) }); const result = await response.json() as { error?: string }; if (!response.ok) setError(result.error ?? "Unable to resend code."); else { setOtpSent(true); setError("A new verification code has been sent."); } }}>Resend verification code</button>
+          {error && <p className="error" role="alert">{error}</p>}
+          <p className="notice">The code expires after 10 minutes. Payment cannot start until email ownership is verified.</p>
+        </section>
+      ) : callbackMode ? (
         <section className="purchase" id="payment">
           <p className="eyebrow">PAYMENT RESULT</p><h2>Checking your order</h2>
           {checkingStatus && <p className="muted">Retrieving the latest verified status…</p>}
@@ -131,6 +187,7 @@ function Storefront() {
           </div>}
           {error && <p className="error" role="alert">{error}</p>}
           {orderId && <button className="primary-button" type="button" onClick={() => void refreshOrderStatus(orderId)} disabled={checkingStatus}>Refresh status</button>}
+          {customerOrders.length > 0 && <div className="status-panel" id="my-card"><h3>Your orders</h3>{customerOrders.map((item) => <p key={item.orderId}><strong>{item.orderNumber}</strong> · {item.currency} {item.amount} · {item.paymentStatus} · {item.fulfilmentStatus}</p>)}</div>}
         </section>
       ) : (
         <section className="purchase" id="buy">

@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import type { RowDataPacket } from "mysql2";
 import { z } from "zod";
 import { db } from "../db.js";
+import { getProviderConfig } from "../provider-config.js";
 
 type OrderRow = RowDataPacket & { id: string; customer_email: string; amount: number; payment_status: string };
 type IssuanceRow = RowDataPacket & {
@@ -16,7 +17,8 @@ function cardholderName(email: string) {
   return normalized.length >= 2 ? normalized : "CARD CUSTOMER";
 }
 async function providerRequest(path: string, body: Record<string, unknown>) {
-  const apiKey = process.env.KRIPICARD_API_KEY;
+  const config = await getProviderConfig("kripicard");
+  const apiKey = config.apiKey;
   if (!apiKey) throw new Error("Kripicard is not configured.");
   const response = await fetch(`${baseUrl}${path}`, {
     method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" },
@@ -35,7 +37,7 @@ export async function issueCardForOrder(orderId: string, logger?: { error: (obj:
 
   await db.execute(
     "INSERT IGNORE INTO issued_cards (order_id, provider, issuance_status, name_on_card, bin) VALUES (?, 'kripicard', 'queued', ?, ?)",
-    [order.id, cardholderName(order.customer_email), process.env.KRIPICARD_BIN ?? "539502"],
+    [order.id, cardholderName(order.customer_email), (await getProviderConfig("kripicard")).bin ?? "539502"],
   );
   const [rows] = await db.query<IssuanceRow[]>(
     "SELECT id, order_id, provider_card_id, provider_order_id, provider_reference, issuance_status FROM issued_cards WHERE order_id = ? AND provider = 'kripicard'",

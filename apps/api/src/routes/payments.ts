@@ -4,6 +4,8 @@ import type { RowDataPacket } from "mysql2";
 import { z } from "zod";
 import { db } from "../db.js";
 import { issueCardForOrder } from "../providers/kripicard.js";
+import { getProviderConfig } from "../provider-config.js";
+import { requireOrderOwner } from "./customer.js";
 
 const initializeSchema = z.object({ orderId: z.string().uuid() });
 const webhookSchema = z.object({
@@ -25,13 +27,15 @@ export async function registerPaymentRoutes(app: FastifyInstance) {
   app.post("/api/payments/flutterwave/initialize", async (request, reply) => {
     const parsed = initializeSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: "A valid orderId is required." });
-    const secret = process.env.FLUTTERWAVE_SECRET_KEY;
+    const providerConfig = await getProviderConfig("flutterwave");
+    const secret = providerConfig.secretKey;
     if (!secret) return reply.code(503).send({ error: "Payment provider is not configured." });
     const [orders] = await db.query<OrderRow[]>(
       "SELECT id, order_number, customer_email, currency, amount, payment_status FROM orders WHERE id = ?", [parsed.data.orderId],
     );
     const order = orders[0];
     if (!order) return reply.code(404).send({ error: "Order not found." });
+    if (!(await requireOrderOwner(request, reply, order.customer_email))) return reply;
     if (order.payment_status === "successful") return reply.code(409).send({ error: "Order is already paid." });
     const txRef = `CRW-${randomUUID()}`;
     const [insert] = await db.execute(
@@ -69,7 +73,8 @@ export async function registerPaymentRoutes(app: FastifyInstance) {
   });
 
   app.post("/webhooks/flutterwave", async (request, reply) => {
-    if (!isValidWebhookHash(request.headers["verif-hash"] as string | undefined, process.env.FLUTTERWAVE_WEBHOOK_SECRET)) {
+    const providerConfig = await getProviderConfig("flutterwave");
+    if (!isValidWebhookHash(request.headers["verif-hash"] as string | undefined, providerConfig.webhookSecret)) {
       return reply.code(401).send({ error: "Invalid webhook signature." });
     }
     const parsed = webhookSchema.safeParse(request.body);
@@ -89,7 +94,8 @@ export async function registerPaymentRoutes(app: FastifyInstance) {
       return reply.code(200).send({ received: true });
     }
     try {
-      const secret = process.env.FLUTTERWAVE_SECRET_KEY;
+      const providerConfig = await getProviderConfig("flutterwave");
+    const secret = providerConfig.secretKey;
       if (!secret) throw new Error("Flutterwave secret key is not configured.");
       const verifyResponse = await fetch(`${apiBase}/transactions/${encodeURIComponent(String(event.id))}/verify`, {
         headers: { Authorization: `Bearer ${secret}` }, signal: AbortSignal.timeout(20000),

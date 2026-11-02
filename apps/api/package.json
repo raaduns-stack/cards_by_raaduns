@@ -9,7 +9,8 @@
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "migrate": "tsx src/migrate.ts",
-    "bootstrap-admin": "tsx src/bootstrap-admin.ts"
+    "bootstrap-admin": "tsx src/bootstrap-admin.ts",
+    "smtp:verify": "tsx src/smtp-check.ts"
   },
   "dependencies": {
     "@fastify/cors": "^10.0.2",
@@ -18,10 +19,12 @@
     "dotenv": "^16.4.7",
     "fastify": "^5.2.1",
     "mysql2": "^3.12.0",
-    "zod": "^3.24.2"
+    "nodemailer": "^10.3.1",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/node": "^22.13.4",
+    "@types/nodemailer": "^8.0.2",
     "tsx": "^4.19.3"
   }
 }
